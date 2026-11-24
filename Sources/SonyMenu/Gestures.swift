@@ -3,77 +3,85 @@ import ApplicationServices
 import CoreGraphics
 import SwiftUI
 
-/// A headphone gesture the Mac can actually see.
-///
-/// The WH-1000XM5 turns right-earcup touches into Bluetooth AVRCP commands that macOS
-/// delivers as media keys (play/pause, next, previous). The left NC/AMB button changes
-/// the mode inside the headphones and they report it over the control channel.
+/// A gesture on the WH-1000XM5. With the time-series operation log turned on, the
+/// headphones report each one by name over the control channel (tested on firmware 2.3.1).
 enum Gesture: String, CaseIterable, Identifiable {
-    case doubleTap, swipeForward, swipeBackward, leftButton
+    case doubleTap, swipeForward, swipeBackward, swipeUp, swipeDown, hold, twoFingerHold, palm
+    case leftPress, leftHold
 
     var id: String { rawValue }
 
+    /// Name the headphones log for this gesture.
+    var eventKey: String {
+        switch self {
+        case .doubleTap: return "keyRDoubleTap"
+        case .swipeForward: return "keyRRightFlick"
+        case .swipeBackward: return "keyRLeftFlick"
+        case .swipeUp: return "keyRUpFlick"
+        case .swipeDown: return "keyRDownFlick"
+        case .hold: return "keyRHold"
+        case .twoFingerHold: return "keyRTwoFingerHold"
+        case .palm: return "opQAStart"
+        case .leftPress: return "keyCustomBtn"
+        case .leftHold: return "keyCustomBtnHold"
+        }
+    }
+
+    var isLeft: Bool { self == .leftPress || self == .leftHold }
+
     var title: String {
         switch self {
-        case .doubleTap: return "Right: double tap"
-        case .swipeForward: return "Right: swipe forward"
-        case .swipeBackward: return "Right: swipe backward"
-        case .leftButton: return "Left: NC/AMB button press"
+        case .doubleTap: return "Double tap"
+        case .swipeForward: return "Swipe forward"
+        case .swipeBackward: return "Swipe backward"
+        case .swipeUp: return "Swipe up"
+        case .swipeDown: return "Swipe down"
+        case .hold: return "Touch and hold"
+        case .twoFingerHold: return "Two-finger touch and hold"
+        case .palm: return "Cover with palm"
+        case .leftPress: return "NC/AMB button: press"
+        case .leftHold: return "NC/AMB button: hold 2 s"
         }
     }
 
-    var detail: String {
+    /// What the headphones do on their own.
+    var builtIn: String {
         switch self {
-        case .doubleTap: return "Arrives as the Play/Pause media key."
-        case .swipeForward: return "Arrives as the Next Track media key."
-        case .swipeBackward: return "Arrives as the Previous Track media key."
-        case .leftButton: return "The headphones switch modes first; this adds a Mac action on top."
+        case .doubleTap: return "Play/Pause"
+        case .swipeForward: return "Next track"
+        case .swipeBackward: return "Previous track"
+        case .swipeUp: return "Volume up"
+        case .swipeDown: return "Volume down"
+        case .hold: return "Voice assistant (if set below)"
+        case .twoFingerHold: return "Speak-to-Chat on/off"
+        case .palm: return "Quick Attention"
+        case .leftPress: return "Switch NC / Ambient"
+        case .leftHold: return "Nothing"
         }
     }
 
-    var defaultTitle: String {
-        switch self {
-        case .doubleTap: return "Default (Play/Pause)"
-        case .swipeForward: return "Default (Next track)"
-        case .swipeBackward: return "Default (Previous track)"
-        case .leftButton: return "Nothing extra"
-        }
-    }
-
-    /// Media key that carries this gesture, if any.
+    /// Media key the headphones send to the Mac for this gesture. The app can swallow these
+    /// (with Accessibility access), so the gesture's own action is replaced, not added to.
     var mediaKey: Int32? {
         switch self {
         case .doubleTap: return MediaKey.play
         case .swipeForward: return MediaKey.next
         case .swipeBackward: return MediaKey.previous
-        case .leftButton: return nil
+        default: return nil
         }
+    }
+
+    var detail: String {
+        if mediaKey != nil { return "Headphones: \(builtIn). Your choice replaces it." }
+        if self == .leftHold { return "Headphones: nothing. Free for any Mac action." }
+        return "Headphones: \(builtIn). Your choice runs as well."
     }
 }
 
-/// Gestures the XM5 has but that can't be remapped from a Mac, and why.
-struct UnavailableGesture: Identifiable {
-    let id = UUID()
-    let title: String
-    let reason: String
-
-    static let all: [UnavailableGesture] = [
-        .init(title: "Right: two-finger tap",
-              reason: "The WH-1000XM5 has no two-finger gesture, so the headphones never send one. Use double tap → Pause instead."),
-        .init(title: "Right: swipe up / down",
-              reason: "Volume changes go to the Mac as absolute volume, not as keys, so they can't be redirected."),
-        .init(title: "Right: touch and hold",
-              reason: "Starts the voice assistant (Siri) through the Bluetooth hands-free profile; the Mac can't intercept it. Turn it on or off under Controls."),
-        .init(title: "Right: cover with palm (Quick Attention)",
-              reason: "Handled entirely inside the headphones; nothing is sent to the Mac."),
-        .init(title: "Left: double / triple press (Quick Access)",
-              reason: "Launches Spotify Tap or Endel through Sony's phone app only; the Mac never sees it."),
-    ]
-}
-
 enum MacAction: String, CaseIterable, Identifiable {
-    case keepDefault, nothing, playPause, pause, next, previous
+    case keepDefault, nothing, playPause, pause, next, previous, previousSong
     case volumeUp, volumeDown, mute, cycleNoise, noiseCancelling, ambient, speakToChat
+    case doubleTapOption, shortcut, openApp
 
     var id: String { rawValue }
 
@@ -85,6 +93,7 @@ enum MacAction: String, CaseIterable, Identifiable {
         case .pause: return "Pause (stop playback)"
         case .next: return "Next track"
         case .previous: return "Previous track"
+        case .previousSong: return "Previous song (skip back, not restart)"
         case .volumeUp: return "Mac volume up"
         case .volumeDown: return "Mac volume down"
         case .mute: return "Mute / unmute Mac"
@@ -92,7 +101,16 @@ enum MacAction: String, CaseIterable, Identifiable {
         case .noiseCancelling: return "Noise cancelling"
         case .ambient: return "Ambient sound"
         case .speakToChat: return "Toggle Speak-to-Chat"
+        case .doubleTapOption: return "Double-tap Option ⌥ (Dictator, dictation)"
+        case .shortcut: return "Press a keyboard shortcut…"
+        case .openApp: return "Open an app…"
         }
+    }
+
+    /// Actions offered for a gesture. "Do nothing" only makes sense where the app can
+    /// swallow the headphones' own command.
+    static func options(for g: Gesture) -> [MacAction] {
+        allCases.filter { $0 != .keepDefault && ($0 != .nothing || g.mediaKey != nil) }
     }
 }
 
@@ -105,13 +123,23 @@ enum MediaKey {
     static let previous: Int32 = 18
 }
 
+/// A recorded key combination, e.g. ⌥Space for a dictation app.
+struct Shortcut: Equatable {
+    var keyCode: UInt16
+    var modifiers: UInt64   // CGEventFlags raw value (device-independent part)
+    var display: String
+}
+
 /// Remembers the gesture map and runs it.
 @MainActor
 final class GestureController: ObservableObject {
     static let shared = GestureController()
 
     @Published private(set) var map: [Gesture: MacAction] = [:]
-    /// Also remap the Mac keyboard's media keys (they arrive the same way as headphone taps).
+    @Published private(set) var shortcuts: [Gesture: Shortcut] = [:]
+    @Published private(set) var apps: [Gesture: URL] = [:]
+    @Published var recording: Gesture?
+    /// Also treat the Mac keyboard's media keys as the gesture (instead of passing them on).
     @Published var includeKeyboard: Bool {
         didSet { UserDefaults.standard.set(includeKeyboard, forKey: "gestures.includeKeyboard") }
     }
@@ -125,14 +153,24 @@ final class GestureController: ObservableObject {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var permissionTimer: Timer?
+    private var recordMonitor: Any?
+    /// When each gesture was last reported by the headphones.
+    private var recent: [Gesture: Date] = [:]
+    /// Media keys swallowed while waiting to see whether the headphones report a gesture.
+    private var pendingKeys: [Int32: DispatchWorkItem] = [:]
     /// Marks key events this app posts, so the tap lets them through.
     nonisolated fileprivate static let syntheticMark: Int64 = 0x534F4E59
 
     private init() {
-        includeKeyboard = UserDefaults.standard.bool(forKey: "gestures.includeKeyboard")
+        let d = UserDefaults.standard
+        includeKeyboard = d.bool(forKey: "gestures.includeKeyboard")
         for g in Gesture.allCases {
-            let raw = UserDefaults.standard.string(forKey: "gesture.\(g.rawValue)") ?? ""
-            map[g] = MacAction(rawValue: raw) ?? .keepDefault
+            map[g] = MacAction(rawValue: d.string(forKey: "gesture.\(g.rawValue)") ?? "") ?? .keepDefault
+            if let s = d.dictionary(forKey: "gesture.\(g.rawValue).shortcut"),
+               let k = s["key"] as? Int, let m = s["mods"] as? Int, let t = s["display"] as? String {
+                shortcuts[g] = Shortcut(keyCode: UInt16(k), modifiers: UInt64(m), display: t)
+            }
+            if let path = d.string(forKey: "gesture.\(g.rawValue).app") { apps[g] = URL(fileURLWithPath: path) }
         }
     }
 
@@ -141,33 +179,42 @@ final class GestureController: ObservableObject {
     func set(_ action: MacAction, for g: Gesture) {
         map[g] = action
         UserDefaults.standard.set(action.rawValue, forKey: "gesture.\(g.rawValue)")
+        if action == .shortcut, shortcuts[g] == nil { startRecording(g) }
+        if action == .openApp, apps[g] == nil { chooseApp(for: g) }
         refresh()
     }
 
-    /// True when some right-earcup gesture needs the media-key tap.
+    /// Accessibility is needed to swallow media keys and to press shortcuts.
+    private var needsAccess: Bool {
+        Gesture.allCases.contains { g in
+            let a = action(for: g)
+            return (g.mediaKey != nil && a != .keepDefault) || a == .shortcut || a == .doubleTapOption
+        }
+    }
+
     private var needsTap: Bool {
         Gesture.allCases.contains { $0.mediaKey != nil && action(for: $0) != .keepDefault }
     }
 
     func start() {
-        headphones?.onLeftButton = { [weak self] _ in
-            guard let self else { return }
-            let a = self.action(for: .leftButton)
-            self.lastEvent = "Left button → \(a == .keepDefault ? "mode switch only" : a.title)"
-            if a != .keepDefault { self.perform(a) }
-        }
+        headphones?.onEvent = { [weak self] key in self?.handleEvent(key) }
         refresh()
+        if needsAccess, !accessibilityGranted {
+            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+            log("Asked for Accessibility access (needed for gesture remapping)")
+        }
     }
 
     func refresh() {
         accessibilityGranted = AXIsProcessTrusted()
         if needsTap, accessibilityGranted { installTap() } else { removeTap() }
-        if needsTap, !accessibilityGranted, permissionTimer == nil {
+        if needsAccess, !accessibilityGranted, permissionTimer == nil {
             // Pick the permission up as soon as the user grants it in System Settings.
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
                 Task { @MainActor in
                     guard let self else { t.invalidate(); return }
-                    if AXIsProcessTrusted() || !self.needsTap {
+                    if AXIsProcessTrusted() || !self.needsAccess {
                         t.invalidate(); self.permissionTimer = nil; self.refresh()
                     }
                 }
@@ -180,6 +227,20 @@ final class GestureController: ObservableObject {
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
         refresh()
+    }
+
+    // MARK: Headphone events
+
+    private func handleEvent(_ key: String) {
+        guard let g = Gesture.allCases.first(where: { $0.eventKey == key }) else { return }
+        recent[g] = Date()
+        let a = action(for: g)
+        lastEvent = "\(g.isLeft ? "Left" : "Right"): \(g.title) → \(a == .keepDefault ? g.builtIn : a.title)"
+        log("Gesture \(g.rawValue) → \(a.rawValue)")
+        if let mk = g.mediaKey, let pending = pendingKeys.removeValue(forKey: mk) {
+            pending.cancel() // the swallowed media key was this gesture, not the keyboard
+        }
+        if a != .keepDefault { perform(a, for: g) }
     }
 
     // MARK: Media-key tap
@@ -216,44 +277,97 @@ final class GestureController: ObservableObject {
         if let port = tap { CGEvent.tapEnable(tap: port, enable: true) }
     }
 
-    /// Returns true when the key event should be swallowed.
-    fileprivate func handleMediaKey(_ key: Int32, down: Bool, sourcePID: Int64) -> Bool {
+    /// Returns true when the key event should be swallowed. A remapped gesture's media key is
+    /// held back: if the headphones report the gesture (just before or within 0.7 s), the key is
+    /// dropped and the gesture's action runs instead; otherwise it came from the keyboard and is
+    /// passed on unchanged.
+    fileprivate func handleMediaKey(_ key: Int32, down: Bool) -> Bool {
         guard let g = Gesture.allCases.first(where: { $0.mediaKey == key }) else { return false }
-        if down {
-            let name = sourcePID > 0 ? Self.processName(pid_t(sourcePID)) : "system"
-            log("Media key \(key) from pid \(sourcePID) (\(name))")
-        }
         let a = action(for: g)
-        guard a != .keepDefault else { return false }
-        // Only while the headphones are connected, unless keyboard keys are included too.
-        guard headphones?.isPresent == true || includeKeyboard else { return false }
-        if !includeKeyboard, Self.isKeyboard(pid: sourcePID) { return false }
-        if down {
-            lastEvent = "\(g.title) → \(a.title)"
-            log("Gesture \(g.rawValue) (source pid \(sourcePID)) → \(a.rawValue)")
-            perform(a)
+        guard a != .keepDefault, headphones?.isPresent == true || includeKeyboard else { return false }
+        guard down else { return true } // the matching key-up; re-posts send their own
+        if includeKeyboard {
+            if recent[g].map({ Date().timeIntervalSince($0) < 1.5 }) != true { perform(a, for: g) }
+            return true
         }
+        if let t = recent[g], Date().timeIntervalSince(t) < 1.5 { return true }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingKeys[key] = nil
+            Self.postKey(key) // nothing from the headphones: it was the keyboard
+        }
+        pendingKeys[key]?.cancel()
+        pendingKeys[key] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
         return true
     }
 
-    /// Keyboard media keys are posted by the HID system (pid 0 or WindowServer); Bluetooth
-    /// headphone commands come from bluetoothd / the AVRCP stack.
-    private static func isKeyboard(pid: Int64) -> Bool {
-        if pid <= 0 { return true }
-        let name = NSRunningApplication(processIdentifier: pid_t(pid))?.executableURL?.lastPathComponent
-            ?? processName(pid_t(pid))
-        return name == "WindowServer"
+    // MARK: Shortcut and app choice
+
+    func startRecording(_ g: Gesture) {
+        stopRecording()
+        recording = g
+        recordMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            MainActor.assumeIsolated {
+                guard let self, let g = self.recording else { return e }
+                if e.keyCode == 53, e.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+                    self.stopRecording(); return nil // Esc cancels
+                }
+                let mods = e.modifierFlags.intersection([.command, .option, .control, .shift, .function])
+                let s = Shortcut(keyCode: e.keyCode,
+                                 modifiers: UInt64(Self.cgFlags(mods).rawValue),
+                                 display: Self.describe(mods, e))
+                self.shortcuts[g] = s
+                UserDefaults.standard.set(["key": Int(s.keyCode), "mods": Int(s.modifiers), "display": s.display],
+                                          forKey: "gesture.\(g.rawValue).shortcut")
+                self.stopRecording()
+                return nil
+            }
+        }
     }
 
-    private static func processName(_ pid: pid_t) -> String {
-        var buf = [CChar](repeating: 0, count: 1024)
-        let n = proc_name(pid, &buf, UInt32(buf.count))
-        return n > 0 ? String(cString: buf) : ""
+    func stopRecording() {
+        if let m = recordMonitor { NSEvent.removeMonitor(m) }
+        recordMonitor = nil
+        recording = nil
+    }
+
+    func chooseApp(for g: Gesture) {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.prompt = "Choose"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        apps[g] = url
+        UserDefaults.standard.set(url.path, forKey: "gesture.\(g.rawValue).app")
+    }
+
+    private static func cgFlags(_ m: NSEvent.ModifierFlags) -> CGEventFlags {
+        var f = CGEventFlags()
+        if m.contains(.command) { f.insert(.maskCommand) }
+        if m.contains(.option) { f.insert(.maskAlternate) }
+        if m.contains(.control) { f.insert(.maskControl) }
+        if m.contains(.shift) { f.insert(.maskShift) }
+        if m.contains(.function) { f.insert(.maskSecondaryFn) }
+        return f
+    }
+
+    private static func describe(_ m: NSEvent.ModifierFlags, _ e: NSEvent) -> String {
+        var s = ""
+        if m.contains(.function) { s += "fn " }
+        if m.contains(.control) { s += "⌃" }
+        if m.contains(.option) { s += "⌥" }
+        if m.contains(.shift) { s += "⇧" }
+        if m.contains(.command) { s += "⌘" }
+        let names: [UInt16: String] = [49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 53: "Esc",
+                                       122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6",
+                                       98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12"]
+        return s + (names[e.keyCode] ?? (e.charactersIgnoringModifiers ?? "?").uppercased())
     }
 
     // MARK: Actions
 
-    func perform(_ a: MacAction) {
+    func perform(_ a: MacAction, for g: Gesture? = nil) {
         switch a {
         case .keepDefault, .nothing: break
         case .playPause: Self.postKey(MediaKey.play)
@@ -261,6 +375,10 @@ final class GestureController: ObservableObject {
             if !MediaRemote.send(.pause) { Self.postKey(MediaKey.play) }
         case .next: Self.postKey(MediaKey.next)
         case .previous: Self.postKey(MediaKey.previous)
+        case .previousSong:
+            // Most players restart the song on the first "previous"; the second one goes back.
+            Self.postKey(MediaKey.previous)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { Self.postKey(MediaKey.previous) }
         case .volumeUp: Self.postKey(MediaKey.soundUp)
         case .volumeDown: Self.postKey(MediaKey.soundDown)
         case .mute: Self.postKey(MediaKey.mute)
@@ -269,6 +387,38 @@ final class GestureController: ObservableObject {
         case .ambient: headphones?.setMode(.ambient)
         case .speakToChat:
             if let hp = headphones, let on = hp.speakToChat { hp.setSpeakToChat(!on) }
+        case .doubleTapOption: Self.doubleTapOption()
+        case .shortcut:
+            if let g, let s = shortcuts[g] { Self.press(s) } else { log("No shortcut recorded") }
+        case .openApp:
+            if let g, let url = apps[g] {
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            } else { log("No app chosen") }
+        }
+    }
+
+    /// Two quick taps of the Option key, which dictation apps such as Dictator use to start
+    /// and stop hands-free dictation.
+    static func doubleTapOption() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        func tapOnce() {
+            for down in [true, false] {
+                guard let e = CGEvent(keyboardEventSource: src, virtualKey: 58, keyDown: down) else { continue }
+                e.type = .flagsChanged
+                e.flags = down ? .maskAlternate : []
+                e.post(tap: .cghidEventTap)
+            }
+        }
+        tapOnce()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { tapOnce() }
+    }
+
+    static func press(_ s: Shortcut) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        for down in [true, false] {
+            guard let e = CGEvent(keyboardEventSource: src, virtualKey: s.keyCode, keyDown: down) else { continue }
+            e.flags = CGEventFlags(rawValue: s.modifiers)
+            e.post(tap: .cghidEventTap)
         }
     }
 
@@ -302,10 +452,7 @@ private func mediaKeyCallback(proxy: CGEventTapProxy, type: CGEventType, event: 
     }
     let key = Int32((ns.data1 & 0xFFFF_0000) >> 16)
     let state = (ns.data1 & 0xFF00) >> 8
-    let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
-    let swallow = MainActor.assumeIsolated {
-        controller.handleMediaKey(key, down: state == 0xA, sourcePID: pid)
-    }
+    let swallow = MainActor.assumeIsolated { controller.handleMediaKey(key, down: state == 0xA) }
     return swallow ? nil : Unmanaged.passUnretained(event)
 }
 

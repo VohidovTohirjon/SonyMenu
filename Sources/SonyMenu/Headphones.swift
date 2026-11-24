@@ -102,8 +102,8 @@ final class Headphones: NSObject, ObservableObject {
     var log: (String) -> Void = { _ in }
     /// Every MDR payload received (table 1 and table 2), for `--dump`.
     var onPayload: ((UInt8, [UInt8]) -> Void)?
-    /// The NC/ambient mode changed on the headphones without the app asking (left button press).
-    var onLeftButton: ((SoundMode) -> Void)?
+    /// A gesture or sensor event the headphones logged (see `Gesture.eventKey`).
+    var onEvent: ((String) -> Void)?
     /// A setting reply arrived: (command, inquired type). Used by `--selftest`.
     var onReply: ((UInt8, UInt8) -> Void)?
 
@@ -368,7 +368,6 @@ final class Headphones: NSObject, ObservableObject {
                 return
             }
             ncType = type
-            let old = mode
             lastNcParams = p
             let newMode: SoundMode = p[3] == 0 ? .off : (p[4] == 0 ? .noiseCancelling : .ambient)
             mode = newMode
@@ -377,11 +376,6 @@ final class Headphones: NSObject, ObservableObject {
             isReady = true
             reply(cmd, type)
             log("Mode: \(newMode), level \(p[6]), voice \(focusOnVoice)")
-            // A notification we didn't cause, that changes the mode: the left button was pressed.
-            if cmd == Cmd.ncAsmNtfyParam, old != nil, old != newMode,
-               Date().timeIntervalSince(lastNcSetAt) > 2 {
-                onLeftButton?(newMode)
-            }
 
         case Cmd.eqRetCapability:
             // [51, type, bandCount, stepCount, presetCount, (id, name)...]
@@ -442,10 +436,14 @@ final class Headphones: NSObject, ObservableObject {
             }
 
         case Cmd.logNtfyParam:
-            // Time-series operation log: short strings such as "unitWear".
-            if type == 0x01 {
-                var i = 2
-                log("Headphone event: \(MDR.string(p, at: &i) ?? hex(p))")
+            // Time-series operation log: what the user just did on the headphones, e.g.
+            // "keyRDoubleTap", "keyCustomBtnHold", "opQAStart", "unitWear". Keys come with a
+            // one-byte length; "op…" entries with a two-byte length and a trailing zero.
+            if type == 0x01, p.count > 3 {
+                var i = p[2] == 0 ? 3 : 2
+                let key = (MDR.string(p, at: &i) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                log("Headphone event: \(key.isEmpty ? "(raw \(hex(p)))" : key)")
+                if !key.isEmpty { onEvent?(key) }
             }
 
         default:

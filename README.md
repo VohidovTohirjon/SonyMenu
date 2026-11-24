@@ -24,20 +24,25 @@ Every option appears only if the headphones list it as supported. All of them we
 
 ## Gesture remapping
 
-| Gesture | How the Mac sees it | Remappable |
-| --- | --- | --- |
-| Right: double tap | Play/Pause media key | yes |
-| Right: swipe forward / backward | Next / Previous media key | yes |
-| Left: NC/AMB button | mode-change notification from the headphones | adds a Mac action after the mode switch |
-| Right: swipe up / down | absolute Bluetooth volume | no |
-| Right: touch and hold | voice assistant over hands-free | on/off only |
-| Right: cover with palm (Quick Attention) | handled in the headphones | no |
-| Right: two-finger tap | the XM5 has no such gesture | no |
-| Left: double/triple press (Quick Access) | Sony's phone app only | no |
+The WH-1000XM5 reports every touch by name over its control channel (time-series operation log), so SonyMenu sees each gesture and can run a Mac action for it.
 
-Actions you can pick: Play/Pause, Pause (stop), Next, Previous, Mac volume up/down/mute, cycle NC/Ambient/Off, Noise cancelling, Ambient, toggle Speak-to-Chat, or do nothing. Media actions reach whatever is playing, including YouTube in Safari or Chrome.
+| Gesture | Reported as | Headphones' own action | Remap |
+| --- | --- | --- | --- |
+| Right: double tap | `keyRDoubleTap` | Play/Pause | replaced |
+| Right: swipe forward | `keyRRightFlick` | Next track | replaced |
+| Right: swipe backward | `keyRLeftFlick` | Previous track | replaced |
+| Right: swipe up / down | `keyRUpFlick` / `keyRDownFlick` | volume | added on top |
+| Right: touch and hold | `keyRHold` | voice assistant (if set) | added on top |
+| Right: two-finger touch and hold | `keyRTwoFingerHold` | Speak-to-Chat on/off | added on top |
+| Right: cover with palm | `opQAStart` / `opQAEnd` | Quick Attention | added on top |
+| Left: NC/AMB press | `keyCustomBtn` | switch NC / Ambient | added on top |
+| Left: NC/AMB hold 2 s | `keyCustomBtnHold` | nothing | free |
 
-Remapping the right-earcup gestures needs **Accessibility** access (System Settings → Privacy & Security → Accessibility), because the app catches the media keys. By default only events that don't come from the keyboard are changed; there is a switch to include the keyboard's media keys too.
+"Replaced" gestures reach the Mac as media keys; SonyMenu holds those keys back and runs your action instead. Keyboard media keys still work as usual unless you choose otherwise. The rest happen inside the headphones (or as Bluetooth volume), so your action runs as well. A short two-finger tap isn't a gesture on the XM5.
+
+Actions: Play/Pause, Pause, Next, Previous, Previous song (skip back instead of restarting), Mac volume up/down/mute, cycle NC/Ambient/Off, Noise cancelling, Ambient, toggle Speak-to-Chat, **double-tap Option** (starts and stops dictation apps like Dictator), **press a keyboard shortcut** (recorded once), **open an app**, or do nothing.
+
+Replacing media-key gestures and pressing keys needs **Accessibility** access (System Settings → Privacy & Security). Because the app is ad-hoc signed, each new build needs the permission again: run `tccutil reset Accessibility local.sonymenu`, open SonyMenu, and allow it.
 
 ## Compatibility
 

@@ -39,7 +39,10 @@ pairing-device management (no connected-devices list).
 
 ## Gestures
 
-- Touch gestures are **not** reported over this channel. With the time-series log on (`c4 01 00`),
-  the headphones did report `unitRemove` (taken off). Gestures reach the Mac only as AVRCP media keys.
-- `c4 00 00` (action log) dumps usage counters as JSON (`opPlay`, `opNext`, …); SonyMenu doesn't turn it on.
-- A left-button press shows up as an unsolicited `69 17 …` NC notification.
+With the time-series log on (`c4 01 00`), every touch arrives as `c9 01 len "name"`:
+`keyRDoubleTap`, `keyRRightFlick` (forward), `keyRLeftFlick` (backward), `keyRUpFlick`, `keyRDownFlick`,
+`keyRHold`, `keyRTwoFingerHold`, `keyCustomBtn` (left NC/AMB press), `keyCustomBtnHold` (left hold), plus
+`unitWear` / `unitRemove`. Some entries use a two-byte length with a trailing zero:
+`c9 01 00 len "opPrev" 00`, `opNC`, `opQAStart`, `opQAEnd` (Quick Attention).
+The events only come while the headphones are worn. `c4 00 00` (action log) dumps usage counters as JSON instead;
+SonyMenu doesn't turn it on.

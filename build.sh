@@ -24,7 +24,8 @@ case "${1:-}" in
     pkill -x SonyMenu 2>/dev/null || true
     sleep 1
     rm -rf ~/Applications/SonyMenu.app
-    cp -R "$APP" ~/Applications/
+    # Move (not copy) so Launchpad shows only one SonyMenu.
+    mv "$APP" ~/Applications/
     open ~/Applications/SonyMenu.app
     echo "Installed: ~/Applications/SonyMenu.app"
     ;;

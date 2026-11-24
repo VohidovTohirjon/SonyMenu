@@ -18,6 +18,22 @@ struct SettingsView: View {
     }
 }
 
+/// Gestures the XM5 has but the app can't use, and why.
+struct UnavailableGesture: Identifiable {
+    let id = UUID()
+    let title: String
+    let reason: String
+
+    static let all: [UnavailableGesture] = [
+        .init(title: "Two-finger tap (short)",
+              reason: "Not a gesture on the WH-1000XM5: the headphones report nothing. Two-finger touch and hold works."),
+        .init(title: "Stopping the headphones' own volume, assistant, Speak-to-Chat or Quick Attention",
+              reason: "These happen inside the headphones or over Bluetooth audio, so the Mac can add an action but not cancel theirs. Turn the touch panel off to stop all right-side gestures."),
+        .init(title: "Quick Access (double / triple press of the NC/AMB button)",
+              reason: "Set up only in Sony's phone app; it launches Spotify Tap or Endel on the phone."),
+    ]
+}
+
 enum SettingsTab: Hashable { case general, sound, controls }
 
 /// View state kept outside SwiftUI's `@State` (the Command Line Tools lack its macro plugin).
@@ -288,26 +304,17 @@ private struct ControlsTab: View {
                 }
             }
 
+            gestureSection("Right earcup (touch panel)", Gesture.allCases.filter { !$0.isLeft })
+            gestureSection("Left earcup (NC/AMB button)", Gesture.allCases.filter(\.isLeft))
+
             Section {
-                ForEach(Gesture.allCases) { g in
-                    Picker(selection: Binding(get: { gestures.action(for: g) }, set: { gestures.set($0, for: g) })) {
-                        Text(g.defaultTitle).tag(MacAction.keepDefault)
-                        Divider()
-                        ForEach(MacAction.allCases.filter { $0 != .keepDefault }) { Text($0.title).tag($0) }
-                    } label: {
-                        Text(g.title)
-                        Text(g.detail)
-                    }
-                }
                 Toggle(isOn: $gestures.includeKeyboard) {
-                    Text("Also apply to the Mac keyboard's media keys")
-                    Text("Off: only events from the headphones are changed (needs a test, see below).")
+                    Text("Also treat the keyboard's media keys as these gestures")
+                    Text("Off: keyboard Play/Next/Previous keys work as usual.")
                 }
-            } header: {
-                Text("Gestures → Mac actions")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Play/Pause, Next and Previous go to whatever is playing, including YouTube in Safari or Chrome.")
+                    Text("Media actions go to whatever is playing, including YouTube in Safari or Chrome.")
                     if let e = gestures.lastEvent { Text("Last gesture: \(e)").foregroundStyle(.secondary) }
                 }
             }
@@ -318,7 +325,7 @@ private struct ControlsTab: View {
                         .foregroundStyle(gestures.accessibilityGranted ? Color.dsGreen : Color.dsOrange)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(gestures.accessibilityGranted ? "Accessibility access granted" : "Accessibility access needed")
-                        Text("Changing the right-earcup gestures means catching media keys, which macOS allows only with Accessibility access. The left button doesn't need it.")
+                        Text("Needed to replace double tap / swipe forward / swipe backward, and to press keyboard shortcuts. If SonyMenu is already switched on in System Settings but this still says needed, switch it off and on again (each new build of the app needs this).")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -339,5 +346,44 @@ private struct ControlsTab: View {
         }
         .formStyle(.grouped)
         .onAppear { gestures.refresh() }
+        .onDisappear { gestures.stopRecording() }
+    }
+
+    private func gestureSection(_ title: String, _ list: [Gesture]) -> some View {
+        Section(title) {
+            ForEach(list) { g in
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker(selection: Binding(get: { gestures.action(for: g) }, set: { gestures.set($0, for: g) })) {
+                        Text("Default (\(g.builtIn))").tag(MacAction.keepDefault)
+                        Divider()
+                        ForEach(MacAction.options(for: g)) { Text($0.title).tag($0) }
+                    } label: {
+                        Text(g.title)
+                        Text(g.detail)
+                    }
+                    if gestures.action(for: g) == .shortcut {
+                        HStack {
+                            Text(gestures.recording == g ? "Press the shortcut now (Esc cancels)…"
+                                 : "Shortcut: \(gestures.shortcuts[g]?.display ?? "none")")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(gestures.recording == g ? "Cancel" : "Record…") {
+                                gestures.recording == g ? gestures.stopRecording() : gestures.startRecording(g)
+                            }
+                        }
+                        .font(.callout)
+                    }
+                    if gestures.action(for: g) == .openApp {
+                        HStack {
+                            Text("App: \(gestures.apps[g]?.deletingPathExtension().lastPathComponent ?? "none")")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Choose…") { gestures.chooseApp(for: g) }
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+        }
     }
 }
