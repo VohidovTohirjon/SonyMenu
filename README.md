@@ -2,50 +2,61 @@
 
 <h1 align="center">SonyMenu</h1>
 
-<p align="center">Значок в строке меню macOS для наушников Sony WH-1000XM5 и XM6: заряд и переключение шумоподавления в один клик, как у AirPods.</p>
+<p align="center">A macOS menu bar app for Sony WH-1000XM5 headphones: battery, noise cancelling, equalizer, Speak-to-Chat and the rest of Sony's settings, plus remappable gestures. No Sony app, no internet.</p>
 
-<p align="center"><a href="#english">English below</a></p>
+<p align="center"><img src="docs/screenshots/panel-dark-ambient.png" width="290" alt="Menu bar panel"></p>
 
----
+## Features
 
-## Что умеет
+**Menu bar panel**
+- Battery, charging and the Bluetooth codec in use (AAC, SBC, LDAC).
+- Noise Cancelling / Ambient Sound / Off, ambient level 1–20 and Focus on voice.
+- Equalizer preset, DSEE Extreme, Speak-to-Chat.
+- Previous / Play-Pause / Next and the headphone volume (0–30).
+- Launch at login.
 
-- Значок наушников появляется в строке меню, когда наушники подключены, и пропадает, когда отключены.
-- Клик по значку открывает панель в стиле Liquid Glass:
-  - заряд батареи и значок зарядки;
-  - режимы: **Шумоподавление**, **Внешний звук**, **Выключено**;
-  - для внешнего звука: уровень от 1 до 20 и **Фокус на голосе**;
-  - переключатель **Автозапуск** (запуск при входе в систему).
-- Работает без официального приложения Sony и без интернета: всё идёт напрямую по Bluetooth.
+**Settings window** (Settings… in the panel)
+- *General*: model, firmware, codec; Bluetooth connection quality (sound vs. stable connection); multipoint; automatic power off; pause when taken off; voice guidance; turn the headphones off.
+- *Sound*: ambient level and voice focus; equalizer presets, plus a custom 5-band EQ with Clear Bass; DSEE Extreme; Speak-to-Chat with sensitivity and timeout.
+- *Controls*: right touch panel on/off; what the left NC/AMB button cycles through; touch and hold → voice assistant or nothing; **gesture remapping** (below).
 
-## Совместимость
+Every option appears only if the headphones list it as supported. All of them were tested on a WH-1000XM5 (firmware 2.3.1) with `--selftest`.
 
-| Наушники | Статус |
+## Gesture remapping
+
+The WH-1000XM5 reports every touch by name over its control channel (time-series operation log), so SonyMenu sees each gesture and can run a Mac action for it.
+
+| Gesture | Reported as | Headphones' own action | Remap |
+| --- | --- | --- | --- |
+| Right: double tap | `keyRDoubleTap` | Play/Pause | replaced |
+| Right: swipe forward | `keyRRightFlick` | Next track | replaced |
+| Right: swipe backward | `keyRLeftFlick` | Previous track | replaced |
+| Right: swipe up / down | `keyRUpFlick` / `keyRDownFlick` | volume | added on top |
+| Right: touch and hold | `keyRHold` | voice assistant (if set) | added on top |
+| Right: two-finger touch and hold | `keyRTwoFingerHold` | Speak-to-Chat on/off | added on top |
+| Right: cover with palm | `opQAStart` / `opQAEnd` | Quick Attention | added on top |
+| Left: NC/AMB press | `keyCustomBtn` | switch NC / Ambient | added on top |
+| Left: NC/AMB hold 2 s | `keyCustomBtnHold` | nothing | free |
+
+"Replaced" gestures reach the Mac as media keys; SonyMenu holds those keys back and runs your action instead. Keyboard media keys still work as usual unless you choose otherwise. The rest happen inside the headphones (or as Bluetooth volume), so your action runs as well. A short two-finger tap isn't a gesture on the XM5.
+
+Actions: Play/Pause, Pause, Next, Previous, Previous song (skip back instead of restarting), Mac volume up/down/mute, cycle NC/Ambient/Off, Noise cancelling, Ambient, toggle Speak-to-Chat, **double-tap Option** (starts and stops dictation apps like Dictator), **press a keyboard shortcut** (recorded once), **open an app**, or do nothing.
+
+Replacing media-key gestures and pressing keys needs **Accessibility** access (System Settings → Privacy & Security). Because the app is ad-hoc signed, each new build needs the permission again: run `tccutil reset Accessibility local.sonymenu`, open SonyMenu, and allow it.
+
+## Compatibility
+
+| Headphones | Status |
 | --- | --- |
-| WH-1000XM5 | работает, проверено |
-| WH-1000XM6 | должно работать (тот же протокол), не проверено |
-| Вкладыши Sony (WF-1000XM5/XM6, LinkBuds и др.) | частично: режимы могут работать, заряд пока не показывается |
-| WH-1000XM4, XM3 и старше | не поддерживаются (старая версия протокола) |
+| WH-1000XM5 | works, tested (firmware 2.3.1) |
+| WH-1000XM6 | should work (same protocol), untested |
+| WH-1000XM4 and older | not supported (older protocol) |
 
-Нужна **macOS 26 или новее** (Liquid Glass). Apple Silicon и Intel.
+Requires **macOS 26 or later**. Apple Silicon and Intel.
 
-## Установка
+## Install
 
-1. Скачайте `SonyMenu.zip` со страницы [Releases](../../releases/latest) и распакуйте.
-2. Перетащите `SonyMenu.app` в папку «Программы».
-3. Приложение не подписано сертификатом Apple, поэтому при первом запуске macOS его заблокирует. Откройте **Системные настройки → Конфиденциальность и безопасность**, внизу нажмите **«Всё равно открыть»** рядом с SonyMenu.
-   Или одной командой в Терминале:
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/SonyMenu.app
-   ```
-4. Разрешите доступ к Bluetooth, когда macOS спросит.
-5. Подключите наушники: значок появится в строке меню.
-
-> Значка не видно? Если строка меню переполнена, macOS прячет значки, которые не помещаются (особенно на MacBook с вырезом). Переключитесь на Finder, у него короткое меню, или уберите лишние значки, перетащив их с зажатой ⌘.
-
-## Сборка из исходников
-
-Нужны инструменты разработчика Xcode (`xcode-select --install`).
+From source (needs the Xcode command line tools, `xcode-select --install`):
 
 ```bash
 git clone https://github.com/ellyormakhmudov/SonyMenu.git
@@ -53,49 +64,29 @@ cd SonyMenu
 ./build.sh --install
 ```
 
-`./build.sh --zip` собирает архив для релиза.
+This builds `build/SonyMenu.app`, copies it to `~/Applications` and launches it. `./build.sh --zip` makes a release archive. The app is ad-hoc signed; if macOS blocks a downloaded copy, run `xattr -dr com.apple.quarantine /Applications/SonyMenu.app`.
 
-## Диагностика
+## Diagnostics
 
-Приложение пишет журнал в `~/Library/Logs/SonyMenu.log`. Если ваши наушники не работают, приложите этот файл к [issue](../../issues).
-
-Проверка без интерфейса: выводит, что ответили наушники, и завершается.
+The app logs to `~/Library/Logs/SonyMenu.log`. These modes must run from the bundle so macOS grants Bluetooth access; they write to `~/Library/Logs/SonyMenu-dump.txt`:
 
 ```bash
-open -W --stdout /dev/stdout /Applications/SonyMenu.app --args --probe
+open ~/Applications/SonyMenu.app --args --dump       # raw replies to every read request
+open ~/Applications/SonyMenu.app --args --selftest   # change each setting, read it back, restore it
 ```
 
-## Как это устроено
+Quit the menu bar app first: only one program can hold the headphones' control channel.
 
-Наушники Sony принимают команды по Bluetooth RFCOMM (протокол «MDR», тот же, что у приложения Sony Sound Connect). SonyMenu открывает этот канал, запрашивает заряд и состояние шумоподавления и отправляет команды смены режима. Протокол описан в открытом проекте [mos9527/SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) (MIT); здесь он заново реализован на Swift.
+## How it works
 
-- `Sources/SonyMenu/MDR.swift`: упаковка и разбор пакетов.
-- `Sources/SonyMenu/Headphones.swift`: Bluetooth-соединение, заряд, режимы.
-- `Sources/SonyMenu/Panel.swift`: панель на SwiftUI.
-- `Sources/SonyMenu/StatusController.swift`: значок и выпадающее окно.
+Sony headphones take commands over Bluetooth RFCOMM (the "MDR" protocol used by Sony Sound Connect). The protocol is documented in [mos9527/SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) (MIT) and reimplemented here in Swift. [docs/PROTOCOL.md](docs/PROTOCOL.md) lists the exact bytes used and what the XM5 answered.
 
-## Отказ от ответственности
+- `MDR.swift`: framing and command constants.
+- `Headphones.swift`: Bluetooth link, state, settings.
+- `Panel.swift`, `SettingsView.swift`: the UI.
+- `Gestures.swift`: media-key tap and gesture actions.
+- `SelfTest.swift`: the `--selftest` mode.
 
-Неофициальный проект, никак не связан с Sony Group Corporation. Sony, WH-1000XM5 и WH-1000XM6 являются товарными знаками их владельцев. Используйте на свой риск.
+## Disclaimer
 
-Лицензия: [MIT](LICENSE).
-
----
-
-<a id="english"></a>
-
-## English
-
-A macOS menu bar app for Sony WH-1000XM5 / XM6: battery level and noise cancelling / ambient sound control in one click, AirPods-style.
-
-- Icon appears in the menu bar while the headphones are connected.
-- Liquid Glass dropdown: battery, **Noise cancelling / Ambient sound / Off**, ambient level 1–20, focus on voice, launch at login.
-- Talks to the headphones directly over Bluetooth; no Sony app, no internet.
-
-**Requirements:** macOS 26+, Apple Silicon or Intel. Tested on WH-1000XM5; XM6 should work (same protocol) but is untested. XM4 and older are not supported.
-
-**Install:** download `SonyMenu.zip` from [Releases](../../releases/latest), move the app to Applications. It is not notarized, so allow it in *System Settings → Privacy & Security → Open Anyway* (or run `xattr -dr com.apple.quarantine /Applications/SonyMenu.app`), then allow Bluetooth access.
-
-**Build:** `./build.sh --install` (needs Xcode command line tools).
-
-Protocol knowledge comes from [mos9527/SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) (MIT), reimplemented in Swift. Unofficial project, not affiliated with Sony. MIT licensed.
+Unofficial project, not affiliated with Sony Group Corporation. Sony and WH-1000XM5 are trademarks of their owners. Use at your own risk.

@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var panel: DropdownPanel?
     private var hosting: NSHostingView<AnyView>?
+    private var settingsWindow: NSWindow?
     private var monitors: [Any] = []
     private var bag = Set<AnyCancellable>()
     private let logURL = FileManager.default.homeDirectoryForCurrentUser
@@ -33,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "headphones", accessibilityDescription: "Наушники")
+        item.button?.image = NSImage(systemSymbolName: "headphones", accessibilityDescription: "Headphones")
         item.button?.target = self
         item.button?.action = #selector(togglePanel)
         item.isVisible = false
@@ -45,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.statusItem?.isVisible = present
                 if !present { self.closePanel() }
-                self.hp.log("Значок \(present ? "показан" : "скрыт")")
+                self.hp.log("Menu bar icon \(present ? "shown" : "hidden")")
                 // `--show`: open the panel by itself once connected (used for screenshots).
                 if present, CommandLine.arguments.contains("--show") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.openPanel() }
@@ -58,13 +59,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in DispatchQueue.main.async { self?.layoutPanel() } }
             .store(in: &bag)
 
+        let gestures = GestureController.shared
+        gestures.headphones = hp
+        gestures.log = { [weak self] in self?.hp.log($0) }
+        gestures.start()
+
         hp.start()
+
+        // `--settings`: open the Settings window right away (used for screenshots).
+        if CommandLine.arguments.contains("--settings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.openSettings() }
+        }
+    }
+
+    // MARK: Settings window
+
+    @objc func openSettings() {
+        closePanel()
+        if settingsWindow == nil {
+            let host = NSHostingController(rootView: SettingsView().environmentObject(hp))
+            let w = NSWindow(contentViewController: host)
+            w.title = "SonyMenu Settings"
+            w.styleMask = [.titled, .closable, .miniaturizable]
+            w.isReleasedWhenClosed = false
+            w.center()
+            settingsWindow = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        GestureController.shared.refresh()
     }
 
     // MARK: Panel
 
     private func makePanel() -> DropdownPanel {
-        let host = NSHostingView(rootView: AnyView(PanelView().environmentObject(hp)))
+        let host = NSHostingView(rootView: AnyView(
+            PanelView(openSettings: { [weak self] in self?.openSettings() }).environmentObject(hp)))
         hosting = host
 
         let glass = NSGlassEffectView()
