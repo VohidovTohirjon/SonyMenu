@@ -9,7 +9,8 @@ enum PlaybackState: Equatable { case unknown, playing, paused, stopped }
 
 struct EqPreset: Identifiable, Hashable {
     let id: UInt8
-    var name: String {
+    var name: String { L(nameKey) }
+    private var nameKey: String {
         switch id {
         case 0x00: return "Off"
         case 0x10: return "Bright"
@@ -33,7 +34,8 @@ struct EqPreset: Identifiable, Hashable {
 enum NcButtonCycle: UInt8, CaseIterable, Identifiable {
     case all = 0x01, ncAmbient = 0x02, ncOff = 0x03, ambientOff = 0x04
     var id: UInt8 { rawValue }
-    var title: String {
+    var title: String { L(titleKey) }
+    private var titleKey: String {
         switch self {
         case .all: return "Noise cancelling → Ambient → Off"
         case .ncAmbient: return "Noise cancelling ↔ Ambient"
@@ -51,7 +53,7 @@ final class Headphones: NSObject, ObservableObject {
     @Published var isPresent = false
     // Control channel is open and the headphones have answered.
     @Published private(set) var isReady = false
-    @Published private(set) var name = "Headphones"
+    @Published private(set) var name = L("Headphones")
     @Published private(set) var battery: Int?
     @Published private(set) var charging = false
     @Published private(set) var problem: String?
@@ -172,7 +174,7 @@ final class Headphones: NSObject, ObservableObject {
     private func attach(_ d: IOBluetoothDevice) {
         if device?.addressString == d.addressString, channel != nil { return }
         device = d
-        name = d.name ?? "Headphones"
+        name = d.name ?? L("Headphones")
         isPresent = true
         problem = nil
         disconnectNote?.unregister()
@@ -210,12 +212,12 @@ final class Headphones: NSObject, ObservableObject {
         guard let d = device, channel == nil else { return }
         openAttempts += 1
         guard let record = d.getServiceRecord(for: serviceUUID) else {
-            problem = "Headphones are not responding"
+            problem = L("Headphones are not responding")
             return
         }
         var channelID: BluetoothRFCOMMChannelID = 0
         guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else {
-            problem = "Control channel not found"
+            problem = L("Control channel not found")
             return
         }
         var ch: IOBluetoothRFCOMMChannel?
@@ -232,7 +234,7 @@ final class Headphones: NSObject, ObservableObject {
     private func retryOpen() {
         channel = nil
         guard openAttempts < 4, device != nil else {
-            problem = "Couldn't connect to the headphone controls. Is the Sony app open on another device?"
+            problem = L("Couldn't connect to the headphone controls. Is the Sony app open on another device?")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.openChannel() }

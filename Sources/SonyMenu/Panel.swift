@@ -7,6 +7,7 @@ import SwiftUI
 struct PanelView: View {
     @EnvironmentObject private var hp: Headphones
     @ObservedObject private var loginItem = LoginItem.shared
+    @ObservedObject private var prefs = PanelPrefs.shared
     @Namespace private var glassNS
     var openSettings: () -> Void = {}
 
@@ -17,21 +18,21 @@ struct PanelView: View {
             if let problem = hp.problem, !hp.isReady {
                 status(problem, spinning: false)
             } else if !hp.isReady {
-                status("Connecting…", spinning: true)
+                status(L("Connecting…"), spinning: true)
             } else {
                 modes
                 if hp.mode == .ambient {
                     ambientControls
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                soundSection
-                if hp.supports(Fn.playback) { playbackSection }
+                if prefs.showSound, hasSoundRows { soundSection }
+                if prefs.showPlayback, hp.supports(Fn.playback) { playbackSection }
             }
 
             footer
         }
         .padding(14)
-        .frame(width: 290)
+        .frame(width: 270)
         .animation(.bouncy(duration: 0.35), value: hp.mode)
         .animation(.easeInOut(duration: 0.2), value: hp.isReady)
     }
@@ -112,15 +113,15 @@ struct PanelView: View {
     private var modes: some View {
         GlassEffectContainer(spacing: 12) {
             HStack(alignment: .top, spacing: 0) {
-                ModeButton(title: "Noise Cancelling", symbol: "waveform.slash",
+                ModeButton(title: L("Noise Cancelling"), symbol: "waveform.slash",
                            selected: hp.mode == .noiseCancelling, namespace: glassNS) {
                     hp.setMode(.noiseCancelling)
                 }
-                ModeButton(title: "Ambient Sound", symbol: "ear.fill",
+                ModeButton(title: L("Ambient Sound"), symbol: "ear.fill",
                            selected: hp.mode == .ambient, namespace: glassNS) {
                     hp.setMode(.ambient)
                 }
-                ModeButton(title: "Off", symbol: "circle.slash",
+                ModeButton(title: L("Off"), symbol: "circle.slash",
                            selected: hp.mode == .off, namespace: glassNS) {
                     hp.setMode(.off)
                 }
@@ -147,7 +148,7 @@ struct PanelView: View {
             .tint(.dsAccent)
             .controlSize(.small)
 
-            SwitchRow(title: "Focus on voice", isOn: Binding(
+            SwitchRow(title: L("Focus on voice"), isOn: Binding(
                 get: { hp.focusOnVoice },
                 set: { hp.setFocusOnVoice($0) }
             ))
@@ -156,6 +157,11 @@ struct PanelView: View {
     }
 
     // MARK: Sound
+
+    private var hasSoundRows: Bool {
+        (hp.supports(Fn.presetEq) && !hp.eqPresets.isEmpty) || (hp.supports(Fn.dsee) && hp.dsee != nil)
+            || (hp.supports(Fn.speakToChat) && hp.speakToChat != nil)
+    }
 
     private var soundSection: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -176,11 +182,11 @@ struct PanelView: View {
                 }
             }
             if hp.supports(Fn.dsee), let dsee = hp.dsee {
-                SwitchRow(title: "DSEE Extreme", isOn: Binding(get: { dsee }, set: { hp.setDsee($0) }))
+                SwitchRow(title: L("DSEE Extreme"), isOn: Binding(get: { dsee }, set: { hp.setDsee($0) }))
                     .help("Upscales compressed music. Needs \"Priority on sound quality\".")
             }
             if hp.supports(Fn.speakToChat), let stc = hp.speakToChat {
-                SwitchRow(title: "Speak-to-Chat", isOn: Binding(get: { stc }, set: { hp.setSpeakToChat($0) }))
+                SwitchRow(title: L("Speak-to-Chat"), isOn: Binding(get: { stc }, set: { hp.setSpeakToChat($0) }))
                     .help("Pauses music and lets ambient sound in when you start talking.")
             }
         }
@@ -193,10 +199,10 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 18) {
                 Spacer()
-                glassIcon("backward.fill", help: "Previous track") { hp.playControl(.previous) }
+                glassIcon("backward.fill", help: L("Previous track")) { hp.playControl(.previous) }
                 glassIcon(hp.playback == .playing ? "pause.fill" : "play.fill",
-                          help: "Play / Pause") { hp.togglePlayback() }
-                glassIcon("forward.fill", help: "Next track") { hp.playControl(.next) }
+                          help: L("Play / Pause")) { hp.togglePlayback() }
+                glassIcon("forward.fill", help: L("Next track")) { hp.playControl(.next) }
                 Spacer()
             }
             if hp.volumeKnown {

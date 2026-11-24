@@ -2,17 +2,60 @@
 
 <h1 align="center">SonyMenu</h1>
 
-<p align="center">A macOS menu bar app for Sony WH-1000XM5 headphones: battery, noise cancelling, equalizer, Speak-to-Chat and the rest of Sony's settings, plus remappable gestures. No Sony app, no internet.</p>
+<p align="center">Значок в строке меню macOS для наушников Sony WH-1000XM5 / XM6: заряд, шумоподавление, эквалайзер, Speak-to-Chat и остальные настройки Sony, плюс переназначение жестов. Без приложения Sony и без интернета.</p>
 
-<p align="center"><img src="docs/screenshots/panel-dark-ambient.png" width="290" alt="Menu bar panel"></p>
+<p align="center"><img src="docs/screenshots/panel-dark-ambient.png" width="270" alt="Панель в строке меню"></p>
 
-## Features
+<p align="center"><a href="#english">English below</a></p>
+
+---
+
+## Что умеет
+
+**Панель в строке меню** (компактная)
+- Заряд, зарядка и текущий кодек (AAC, SBC, LDAC).
+- **Шумоподавление / Внешний звук / Выключено**, уровень внешнего звука 1–20 и **Фокус на голосе**.
+- Переключатель **Автозапуск**.
+- По желанию (Настройки → Основные): эквалайзер, DSEE Extreme, Speak-to-Chat и управление музыкой прямо в панели.
+
+**Окно «Настройки»**
+- *Основные*: модель, прошивка, качество Bluetooth-соединения, мультипоинт, автовыключение, пауза при снятии, голосовые подсказки, выключение наушников.
+- *Звук*: эквалайзер (пресеты и 5 полос + Clear Bass), DSEE Extreme, Speak-to-Chat с чувствительностью и временем.
+- *Управление*: сенсорная панель, что переключает левая кнопка NC/AMB, касание с удержанием и **переназначение жестов**: любой жест на наушниках может запускать действие на Mac — предыдущая песня, диктовка (двойной ⌥), сочетание клавиш, открыть приложение и т.д.
+
+Каждая настройка появляется, только если наушники сообщают, что поддерживают её. Интерфейс на русском или английском — по языку системы.
+
+## Установка
+
+1. Скачайте `SonyMenu.zip` со страницы [Releases](../../releases/latest), распакуйте и перетащите `SonyMenu.app` в «Программы».
+2. Приложение не подписано сертификатом Apple: при первом запуске откройте **Системные настройки → Конфиденциальность и безопасность → «Всё равно открыть»**, или в Терминале:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/SonyMenu.app
+   ```
+3. Разрешите доступ к Bluetooth. Для переназначения жестов понадобится ещё **Универсальный доступ** (приложение попросит само, только если вы включите переназначение).
+
+Нужна **macOS 26 или новее**, Apple Silicon или Intel. Проверено на WH-1000XM5; XM6 должна работать (тот же протокол), XM4 и старше не поддерживаются.
+
+Сборка из исходников: `./build.sh --install` (нужны инструменты разработчика, `xcode-select --install`). Журнал: `~/Library/Logs/SonyMenu.log` — приложите его к [issue](../../issues), если что-то не работает.
+
+Спасибо [@VohidovTohirjon](https://github.com/VohidovTohirjon) за настройки Sony, окно настроек и жесты.
+
+Неофициальный проект, не связан с Sony Group Corporation. Лицензия [MIT](LICENSE).
+
+---
+
+<a id="english"></a>
+
+## English
+
+A macOS menu bar app for Sony WH-1000XM5 headphones: battery, noise cancelling, equalizer, Speak-to-Chat and the rest of Sony's settings, plus remappable gestures. No Sony app, no internet. The UI follows the system language (English or Russian).
+
+### Features
 
 **Menu bar panel**
 - Battery, charging and the Bluetooth codec in use (AAC, SBC, LDAC).
 - Noise Cancelling / Ambient Sound / Off, ambient level 1–20 and Focus on voice.
-- Equalizer preset, DSEE Extreme, Speak-to-Chat.
-- Previous / Play-Pause / Next and the headphone volume (0–30).
+- Optional (Settings → General): equalizer preset, DSEE Extreme, Speak-to-Chat, and Previous / Play-Pause / Next with headphone volume. Off by default to keep the panel compact.
 - Launch at login.
 
 **Settings window** (Settings… in the panel)
@@ -22,7 +65,7 @@
 
 Every option appears only if the headphones list it as supported. All of them were tested on a WH-1000XM5 (firmware 2.3.1) with `--selftest`.
 
-## Gesture remapping
+### Gesture remapping
 
 The WH-1000XM5 reports every touch by name over its control channel (time-series operation log), so SonyMenu sees each gesture and can run a Mac action for it.
 
@@ -44,7 +87,7 @@ Actions: Play/Pause, Pause, Next, Previous, Previous song (skip back instead of 
 
 Replacing media-key gestures and pressing keys needs **Accessibility** access (System Settings → Privacy & Security). Because the app is ad-hoc signed, each new build needs the permission again: run `tccutil reset Accessibility local.sonymenu`, open SonyMenu, and allow it.
 
-## Compatibility
+### Compatibility
 
 | Headphones | Status |
 | --- | --- |
@@ -54,7 +97,7 @@ Replacing media-key gestures and pressing keys needs **Accessibility** access (S
 
 Requires **macOS 26 or later**. Apple Silicon and Intel.
 
-## Install
+### Install
 
 From source (needs the Xcode command line tools, `xcode-select --install`):
 
@@ -66,7 +109,7 @@ cd SonyMenu
 
 This builds `build/SonyMenu.app`, copies it to `~/Applications` and launches it. `./build.sh --zip` makes a release archive. The app is ad-hoc signed; if macOS blocks a downloaded copy, run `xattr -dr com.apple.quarantine /Applications/SonyMenu.app`.
 
-## Diagnostics
+### Diagnostics
 
 The app logs to `~/Library/Logs/SonyMenu.log`. These modes must run from the bundle so macOS grants Bluetooth access; they write to `~/Library/Logs/SonyMenu-dump.txt`:
 
@@ -77,7 +120,7 @@ open ~/Applications/SonyMenu.app --args --selftest   # change each setting, read
 
 Quit the menu bar app first: only one program can hold the headphones' control channel.
 
-## How it works
+### How it works
 
 Sony headphones take commands over Bluetooth RFCOMM (the "MDR" protocol used by Sony Sound Connect). The protocol is documented in [mos9527/SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) (MIT) and reimplemented here in Swift. [docs/PROTOCOL.md](docs/PROTOCOL.md) lists the exact bytes used and what the XM5 answered.
 
@@ -87,6 +130,6 @@ Sony headphones take commands over Bluetooth RFCOMM (the "MDR" protocol used by 
 - `Gestures.swift`: media-key tap and gesture actions.
 - `SelfTest.swift`: the `--selftest` mode.
 
-## Disclaimer
+### Disclaimer
 
 Unofficial project, not affiliated with Sony Group Corporation. Sony and WH-1000XM5 are trademarks of their owners. Use at your own risk.

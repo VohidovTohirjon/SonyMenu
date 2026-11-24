@@ -25,12 +25,12 @@ struct UnavailableGesture: Identifiable {
     let reason: String
 
     static let all: [UnavailableGesture] = [
-        .init(title: "Two-finger tap (short)",
-              reason: "Not a gesture on the WH-1000XM5: the headphones report nothing. Two-finger touch and hold works."),
-        .init(title: "Stopping the headphones' own volume, assistant, Speak-to-Chat or Quick Attention",
-              reason: "These happen inside the headphones or over Bluetooth audio, so the Mac can add an action but not cancel theirs. Turn the touch panel off to stop all right-side gestures."),
-        .init(title: "Quick Access (double / triple press of the NC/AMB button)",
-              reason: "Set up only in Sony's phone app; it launches Spotify Tap or Endel on the phone."),
+        .init(title: L("Two-finger tap (short)"),
+              reason: L("Not a gesture on the WH-1000XM5: the headphones report nothing. Two-finger touch and hold works.")),
+        .init(title: L("Stopping the headphones' own volume, assistant, Speak-to-Chat or Quick Attention"),
+              reason: L("These happen inside the headphones or over Bluetooth audio, so the Mac can add an action but not cancel theirs. Turn the touch panel off to stop all right-side gestures.")),
+        .init(title: L("Quick Access (double / triple press of the NC/AMB button)"),
+              reason: L("Set up only in Sony's phone app; it launches Spotify Tap or Endel on the phone.")),
     ]
 }
 
@@ -61,6 +61,7 @@ private extension View {
 private struct GeneralTab: View {
     @EnvironmentObject private var hp: Headphones
     @ObservedObject private var loginItem = LoginItem.shared
+    @ObservedObject private var prefs = PanelPrefs.shared
     @StateObject private var ui = SettingsUI()
 
     var body: some View {
@@ -68,12 +69,20 @@ private struct GeneralTab: View {
             Section("Device") {
                 LabeledContent("Model", value: hp.modelName ?? hp.name)
                 LabeledContent("Firmware", value: hp.firmware ?? "—")
-                LabeledContent("Battery", value: hp.battery.map { "\($0)%\(hp.charging ? " (charging)" : "")" } ?? "—")
+                LabeledContent("Battery", value: hp.battery.map { hp.charging ? String(format: L("%d%% (charging)"), $0) : "\($0)%" } ?? "—")
                 LabeledContent("Codec", value: hp.codec ?? "—")
             }
 
             Section("App") {
                 Toggle("Launch SonyMenu at login", isOn: Binding(get: { loginItem.enabled }, set: { loginItem.set($0) }))
+                Toggle(isOn: $prefs.showSound) {
+                    Text("Show sound settings in the menu bar panel")
+                    Text("Equalizer, DSEE Extreme, Speak-to-Chat.")
+                }
+                Toggle(isOn: $prefs.showPlayback) {
+                    Text("Show playback controls in the menu bar panel")
+                    Text("Previous / Play-Pause / Next and headphone volume.")
+                }
             }
 
             if hp.isReady {
@@ -124,7 +133,9 @@ private struct GeneralTab: View {
         .formStyle(.grouped)
     }
 
-    static func powerOffTitle(_ v: UInt8) -> String {
+    static func powerOffTitle(_ v: UInt8) -> String { L(powerOffKey(v)) }
+
+    private static func powerOffKey(_ v: UInt8) -> String {
         switch v {
         case 0x00: return "After 5 minutes"
         case 0x01: return "After 30 minutes"
@@ -304,8 +315,8 @@ private struct ControlsTab: View {
                 }
             }
 
-            gestureSection("Right earcup (touch panel)", Gesture.allCases.filter { !$0.isLeft })
-            gestureSection("Left earcup (NC/AMB button)", Gesture.allCases.filter(\.isLeft))
+            gestureSection(L("Right earcup (touch panel)"), Gesture.allCases.filter { !$0.isLeft })
+            gestureSection(L("Left earcup (NC/AMB button)"), Gesture.allCases.filter(\.isLeft))
 
             Section {
                 Toggle(isOn: $gestures.includeKeyboard) {
@@ -324,7 +335,7 @@ private struct ControlsTab: View {
                     Image(systemName: gestures.accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(gestures.accessibilityGranted ? Color.dsGreen : Color.dsOrange)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(gestures.accessibilityGranted ? "Accessibility access granted" : "Accessibility access needed")
+                        Text(gestures.accessibilityGranted ? L("Accessibility access granted") : L("Accessibility access needed"))
                         Text("Needed to replace double tap / swipe forward / swipe backward, and to press keyboard shortcuts. If SonyMenu is already switched on in System Settings but this still says needed, switch it off and on again (each new build of the app needs this).")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -363,11 +374,11 @@ private struct ControlsTab: View {
                     }
                     if gestures.action(for: g) == .shortcut {
                         HStack {
-                            Text(gestures.recording == g ? "Press the shortcut now (Esc cancels)…"
-                                 : "Shortcut: \(gestures.shortcuts[g]?.display ?? "none")")
+                            Text(gestures.recording == g ? L("Press the shortcut now (Esc cancels)…")
+                                 : String(format: L("Shortcut: %@"), gestures.shortcuts[g]?.display ?? L("none")))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Button(gestures.recording == g ? "Cancel" : "Record…") {
+                            Button(gestures.recording == g ? L("Cancel") : L("Record…")) {
                                 gestures.recording == g ? gestures.stopRecording() : gestures.startRecording(g)
                             }
                         }
@@ -375,7 +386,7 @@ private struct ControlsTab: View {
                     }
                     if gestures.action(for: g) == .openApp {
                         HStack {
-                            Text("App: \(gestures.apps[g]?.deletingPathExtension().lastPathComponent ?? "none")")
+                            Text(String(format: L("App: %@"), gestures.apps[g]?.deletingPathExtension().lastPathComponent ?? L("none")))
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Button("Choose…") { gestures.chooseApp(for: g) }

@@ -15,6 +15,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/SonyMenu"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+for l in Resources/*.lproj; do cp -R "$l" "$APP/Contents/Resources/"; done
 codesign --force --sign - "$APP"
 echo "Built: $PWD/$APP"
 
