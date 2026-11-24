@@ -158,8 +158,9 @@ final class GestureController: ObservableObject {
     private var recent: [Gesture: Date] = [:]
     /// Media keys swallowed while waiting to see whether the headphones report a gesture.
     private var pendingKeys: [Int32: DispatchWorkItem] = [:]
-    /// Marks key events this app posts, so the tap lets them through.
-    nonisolated fileprivate static let syntheticMark: Int64 = 0x534F4E59
+    /// Marks key events this app posts, so the tap lets them through. Random per launch, so
+    /// other processes can't predict it.
+    nonisolated fileprivate static let syntheticMark = Int64.random(in: 1...Int64.max)
 
     private init() {
         let d = UserDefaults.standard
@@ -233,6 +234,8 @@ final class GestureController: ObservableObject {
 
     private func handleEvent(_ key: String) {
         guard let g = Gesture.allCases.first(where: { $0.eventKey == key }) else { return }
+        // One action per gesture: ignore a repeat of the same event within 0.3 s.
+        if let t = recent[g], Date().timeIntervalSince(t) < 0.3 { return }
         recent[g] = Date()
         let a = action(for: g)
         lastEvent = "\(g.isLeft ? "Left" : "Right"): \(g.title) → \(a == .keepDefault ? g.builtIn : a.title)"
