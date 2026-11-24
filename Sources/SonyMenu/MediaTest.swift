@@ -75,6 +75,22 @@ final class MediaTest {
         await check("Five fast swipes forward → five nexts", expect: ["next": 5], within: 0.2) {
             for i in 0..<5 { self.report(.swipeForward, after: Double(i) * 0.4) }
         }
+        // Headphones that send their own play/pause/skip over Bluetooth first (opPlay etc.).
+        await check("Double tap after opPause → pause, no toggle", expect: ["pause": 1], within: 0.3) {
+            self.op("opPause", after: 0); self.report(.doubleTap, after: 0.15)
+        }
+        await check("Double tap after opPlay → play, no toggle", expect: ["play": 1], within: 0.3) {
+            self.op("opPlay", after: 0); self.report(.doubleTap, after: 0.15)
+        }
+        await check("Four double taps after opPause → never toggles", expect: ["pause": 4], within: 0.3) {
+            for i in 0..<4 { self.op("opPause", after: Double(i) * 0.7); self.report(.doubleTap, after: Double(i) * 0.7 + 0.15) }
+        }
+        await check("Swipe forward after opNext → no second skip", expect: [:], within: 0) {
+            self.op("opNext", after: 0); self.report(.swipeForward, after: 0.2)
+        }
+        await check("Stale opPause (2 s old) is ignored", expect: ["toggle": 1], within: 2.3) {
+            self.op("opPause", after: 0); self.report(.doubleTap, after: 2.0)
+        }
         hp.simulateLink(false)
         await check("Link down: keyboard key still works", expect: ["previous": 1], within: 0.15) {
             self.headphoneKey(MediaKey.previous)
@@ -96,6 +112,9 @@ final class MediaTest {
         }
         await check("Keyboard previous key still works", expect: ["previous": 1], within: 1.2) {
             self.headphoneKey(MediaKey.previous)
+        }
+        await check("Previous song after opPrev → one more previous", expect: ["previous": 1], within: 0.3) {
+            self.op("opPrev", after: 0); self.report(.swipeBackward, after: 0.15)
         }
         gc.testMap = [.doubleTap: .pause]
         await check("Pause action pauses (doesn't toggle)", expect: ["pause": 1], within: 0.5) {
@@ -136,6 +155,11 @@ final class MediaTest {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self.gc.handleEvent(g.eventKey) }
     }
 
+    /// A playback command the headphones report having sent over Bluetooth themselves.
+    private func op(_ key: String, after delay: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self.gc.handleEvent(key) }
+    }
+
     private func check(_ name: String, expect: [String: Int], within: Double, _ act: @escaping () -> Void) async {
         got = [:]
         firstAt = nil
@@ -144,7 +168,7 @@ final class MediaTest {
         await wait(3.4) // also catch late extra commands
         let ok = got == expect
         let latency = firstAt.map { String(format: "first after %.0f ms", $0.timeIntervalSince(start) * 1000) } ?? "nothing arrived"
-        let inTime = firstAt.map { $0.timeIntervalSince(start) <= within } ?? false
+        let inTime = expect.isEmpty ? got.isEmpty : (firstAt.map { $0.timeIntervalSince(start) <= within } ?? false)
         let pass = ok && inTime
         if pass { passed += 1 } else { failed += 1 }
         let gotText = got.isEmpty ? "none" : got.sorted { $0.key < $1.key }.map { "\($0.key)×\($0.value)" }.joined(separator: " ")

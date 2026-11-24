@@ -279,7 +279,13 @@ final class GestureController: ObservableObject {
 
     // MARK: Headphone events
 
+    /// The playback command the headphones just sent over Bluetooth themselves (opPlay, opPause,
+    /// opNext, opPrev). It comes about 0.1-0.3 s before the gesture report.
+    private var sentOp: (key: String, at: Date)?
+    private static let sentOps: Set<String> = ["opPlay", "opPause", "opNext", "opPrev"]
+
     func handleEvent(_ key: String) {
+        if Self.sentOps.contains(key) { sentOp = (key, Date()); return }
         guard let g = Gesture.allCases.first(where: { $0.eventKey == key }) else { return }
         // One action per gesture: ignore a repeat of the same event within 0.3 s.
         if let t = recent[g], Date().timeIntervalSince(t) < 0.3 { return }
@@ -302,7 +308,7 @@ final class GestureController: ObservableObject {
                 return
             }
             reportedFirst[g] = Date()
-            perform(a, for: g)
+            if !followHeadphones(a) { perform(a, for: g) }
             return
         }
         if let mk = g.mediaKey {
@@ -315,7 +321,32 @@ final class GestureController: ObservableObject {
                 reportedFirst[g] = Date() // its media key is still on the way
             }
         }
-        if a != .keepDefault { perform(a, for: g) }
+        if a != .keepDefault, !followHeadphones(a) { perform(a, for: g) }
+    }
+
+    /// When the headphones already sent their own playback command, never toggle on top of it
+    /// (that flips play/pause straight back). Play/pause follows their direction with an explicit
+    /// play or pause, which is harmless if the player already got theirs; a skip they already sent
+    /// isn't repeated. Returns true when that settled the action.
+    private func followHeadphones(_ a: MacAction) -> Bool {
+        guard let op = sentOp, Date().timeIntervalSince(op.at) < 1.0 else { return false }
+        sentOp = nil
+        switch (a, op.key) {
+        case (.playPause, "opPlay"), (.playPause, "opPause"):
+            let c: MediaRemote.Command = op.key == "opPlay" ? .play : .pause
+            let ok = MediaRemote.send(c)
+            log("Headphones sent \(op.key); sent \(c == .play ? "play" : "pause")\(ok ? "" : " (no player answered)")")
+            return true
+        case (.next, "opNext"), (.previous, "opPrev"):
+            log("Headphones sent \(op.key) themselves; not repeating it")
+            return true
+        case (.previousSong, "opPrev"):
+            log("Headphones sent opPrev; one more previous to reach the previous song")
+            Self.postKey(MediaKey.previous)
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: Media-key tap
