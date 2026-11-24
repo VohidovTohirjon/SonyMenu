@@ -4,6 +4,7 @@ import Foundation
 // Command-line modes (run inside the .app so macOS grants Bluetooth access):
 //   --probe [--set nc|ambient|off]  print what the headphones report and exit
 //   --dump                          GET every supported setting, write raw replies to ~/Library/Logs/SonyMenu-dump.txt
+//   --mediatest                     play/pause and next/previous end to end (quit the menu bar app first)
 //   --selftest                      change each setting, read it back, restore it; results in the same file
 //   --snapshot <folder>             render the panel and settings with sample data to PNGs
 // Without arguments it runs the menu bar app.
@@ -36,6 +37,9 @@ if args.contains("--dump") {
     RunLoop.main.run()
 } else if args.contains("--selftest") {
     MainActor.assumeIsolated { SelfTest(emit: makeReportSink()).run() }
+    RunLoop.main.run()
+} else if args.contains("--mediatest") {
+    MainActor.assumeIsolated { MediaTest(emit: makeReportSink()).run() }
     RunLoop.main.run()
 } else if args.contains("--probe") {
     MainActor.assumeIsolated {

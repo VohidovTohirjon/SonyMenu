@@ -21,8 +21,11 @@ echo "Built: $PWD/$APP"
 case "${1:-}" in
   --install)
     mkdir -p ~/Applications
-    pkill -x SonyMenu 2>/dev/null || true
+    # Quit normally so the headphone control channel is closed (a killed app leaves it
+    # open and the next launch waits for it to time out).
+    osascript -e 'tell application id "local.sonymenu" to quit' 2>/dev/null || true
     sleep 1
+    pkill -x SonyMenu 2>/dev/null || true
     rm -rf ~/Applications/SonyMenu.app
     # Move (not copy) so Launchpad shows only one SonyMenu.
     mv "$APP" ~/Applications/
