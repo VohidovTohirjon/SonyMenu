@@ -16,7 +16,7 @@ cp "$BIN" "$APP/Contents/MacOS/SonyMenu"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP"
-echo "Собрано: $PWD/$APP"
+echo "Built: $PWD/$APP"
 
 case "${1:-}" in
   --install)
@@ -26,11 +26,11 @@ case "${1:-}" in
     rm -rf ~/Applications/SonyMenu.app
     cp -R "$APP" ~/Applications/
     open ~/Applications/SonyMenu.app
-    echo "Установлено: ~/Applications/SonyMenu.app"
+    echo "Installed: ~/Applications/SonyMenu.app"
     ;;
   --zip)
     rm -f build/SonyMenu.zip
     ditto -c -k --keepParent "$APP" build/SonyMenu.zip
-    echo "Архив: $PWD/build/SonyMenu.zip"
+    echo "Archive: $PWD/build/SonyMenu.zip"
     ;;
 esac

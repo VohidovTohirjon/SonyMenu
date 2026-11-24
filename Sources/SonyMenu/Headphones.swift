@@ -5,23 +5,107 @@ enum SoundMode: Equatable {
     case noiseCancelling, ambient, off
 }
 
+enum PlaybackState: Equatable { case unknown, playing, paused, stopped }
+
+struct EqPreset: Identifiable, Hashable {
+    let id: UInt8
+    var name: String {
+        switch id {
+        case 0x00: return "Off"
+        case 0x10: return "Bright"
+        case 0x11: return "Excited"
+        case 0x12: return "Mellow"
+        case 0x13: return "Relaxed"
+        case 0x14: return "Vocal"
+        case 0x15: return "Treble Boost"
+        case 0x16: return "Bass Boost"
+        case 0x17: return "Speech"
+        case 0xA0: return "Custom"
+        case 0xA1: return "User Setting 1"
+        case 0xA2: return "User Setting 2"
+        case 0xA3: return "User Setting 3"
+        default: return String(format: "Preset 0x%02X", id)
+        }
+    }
+}
+
+/// What the left NC/AMB button cycles through (NcAsm NC_AMB_TOGGLE).
+enum NcButtonCycle: UInt8, CaseIterable, Identifiable {
+    case all = 0x01, ncAmbient = 0x02, ncOff = 0x03, ambientOff = 0x04
+    var id: UInt8 { rawValue }
+    var title: String {
+        switch self {
+        case .all: return "Noise cancelling → Ambient → Off"
+        case .ncAmbient: return "Noise cancelling ↔ Ambient"
+        case .ncOff: return "Noise cancelling ↔ Off"
+        case .ambientOff: return "Ambient ↔ Off"
+        }
+    }
+}
+
 /// Finds the paired Sony headphones, keeps an RFCOMM channel to them while they are
-/// connected, and exposes battery and NC/ambient state.
+/// connected, and exposes their state and settings.
 @MainActor
 final class Headphones: NSObject, ObservableObject {
     // Audio link is up (the menu bar icon is shown).
     @Published var isPresent = false
     // Control channel is open and the headphones have answered.
     @Published private(set) var isReady = false
-    @Published private(set) var name = "Наушники"
+    @Published private(set) var name = "Headphones"
     @Published private(set) var battery: Int?
     @Published private(set) var charging = false
+    @Published private(set) var problem: String?
+
+    // Device info
+    @Published private(set) var modelName: String?
+    @Published private(set) var firmware: String?
+    @Published private(set) var codec: String?
+    @Published private(set) var supportT1: Set<UInt8> = []
+    @Published private(set) var supportT2: Set<UInt8> = []
+
+    // Noise cancelling / ambient
     @Published private(set) var mode: SoundMode?
     @Published var ambientLevel: Double = 10
     @Published private(set) var focusOnVoice = false
-    @Published private(set) var problem: String?
+    @Published private(set) var ncButton: NcButtonCycle?
+
+    // Sound
+    @Published private(set) var eqPresets: [EqPreset] = []
+    @Published private(set) var eqPreset: UInt8?
+    @Published private(set) var eqAvailable = true
+    /// Clear Bass first, then 400 Hz, 1 kHz, 2.5 kHz, 6.3 kHz, 16 kHz; each −10…+10.
+    @Published var eqBands: [Double] = Array(repeating: 0, count: 6)
+    @Published private(set) var dsee: Bool?
+    /// 0 = priority on sound quality, 1 = stable connection.
+    @Published private(set) var connectionPriority: UInt8?
+
+    // Speak-to-Chat
+    @Published private(set) var speakToChat: Bool?
+    @Published private(set) var stcSensitivity: UInt8?   // 0 auto, 1 high, 2 low
+    @Published private(set) var stcTimeout: UInt8?       // 0 short, 1 standard, 2 long, 3 off
+
+    // System
+    @Published private(set) var autoPause: Bool?
+    @Published private(set) var autoPowerOff: UInt8?
+    @Published private(set) var autoPowerOffOptions: [UInt8] = []
+    @Published private(set) var voiceAssistant: UInt8?
+    @Published private(set) var voiceAssistantOptions: [UInt8] = []
+    @Published private(set) var touchPanel: Bool?
+    @Published private(set) var multipoint: Bool?
+    @Published private(set) var voiceGuidance: Bool?
+
+    // Playback
+    @Published var volume: Double = 15
+    @Published private(set) var volumeKnown = false
+    @Published private(set) var playback: PlaybackState = .unknown
 
     var log: (String) -> Void = { _ in }
+    /// Every MDR payload received (table 1 and table 2), for `--dump`.
+    var onPayload: ((UInt8, [UInt8]) -> Void)?
+    /// The NC/ambient mode changed on the headphones without the app asking (left button press).
+    var onLeftButton: ((SoundMode) -> Void)?
+    /// A setting reply arrived: (command, inquired type). Used by `--selftest`.
+    var onReply: ((UInt8, UInt8) -> Void)?
 
     private var device: IOBluetoothDevice?
     private var channel: IOBluetoothRFCOMMChannel?
@@ -36,8 +120,10 @@ final class Headphones: NSObject, ObservableObject {
 
     private var ncType: UInt8 = Cmd.ncDualSeamless
     private var lastNcParams: [UInt8]?
+    private var lastNcSetAt = Date.distantPast
     private var openAttempts = 0
     private var batteryTimer: Timer?
+    private var stateRequested = false
 
     private let serviceUUID: IOBluetoothSDPUUID = {
         let hex = MDR.serviceUUID.replacingOccurrences(of: "-", with: "")
@@ -51,6 +137,8 @@ final class Headphones: NSObject, ObservableObject {
         return IOBluetoothSDPUUID(bytes: bytes, length: bytes.count)
     }()
 
+    func supports(_ fn: UInt8) -> Bool { supportT1.contains(fn) }
+
     // MARK: - Lifecycle
 
     func start() {
@@ -59,7 +147,7 @@ final class Headphones: NSObject, ObservableObject {
         if let d = findSonyDevice(connectedOnly: true) {
             attach(d)
         } else {
-            log("Наушники не подключены, жду подключения")
+            log("Headphones not connected, waiting")
         }
     }
 
@@ -77,14 +165,14 @@ final class Headphones: NSObject, ObservableObject {
 
     @objc private func deviceDidDisconnect(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         guard device.addressString == self.device?.addressString else { return }
-        log("Наушники отключились")
+        log("Headphones disconnected")
         detach()
     }
 
     private func attach(_ d: IOBluetoothDevice) {
         if device?.addressString == d.addressString, channel != nil { return }
         device = d
-        name = d.name ?? "Наушники"
+        name = d.name ?? "Headphones"
         isPresent = true
         problem = nil
         disconnectNote?.unregister()
@@ -109,39 +197,42 @@ final class Headphones: NSObject, ObservableObject {
         seq = 0
         parser = MDR.StreamParser()
         lastNcParams = nil
+        stateRequested = false
         isReady = false
         isPresent = false
         battery = nil
         mode = nil
+        codec = nil
+        playback = .unknown
     }
 
     private func openChannel() {
         guard let d = device, channel == nil else { return }
         openAttempts += 1
         guard let record = d.getServiceRecord(for: serviceUUID) else {
-            problem = "Наушники не отвечают"
+            problem = "Headphones are not responding"
             return
         }
         var channelID: BluetoothRFCOMMChannelID = 0
         guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else {
-            problem = "Не нашёл канал управления"
+            problem = "Control channel not found"
             return
         }
         var ch: IOBluetoothRFCOMMChannel?
         let result = d.openRFCOMMChannelAsync(&ch, withChannelID: channelID, delegate: self)
         if result != kIOReturnSuccess {
-            log("Не открылся канал: \(String(format: "0x%x", result))")
+            log("Channel did not open: \(String(format: "0x%x", result))")
             retryOpen()
             return
         }
         channel = ch
-        log("Открываю канал \(channelID)")
+        log("Opening channel \(channelID)")
     }
 
     private func retryOpen() {
         channel = nil
         guard openAttempts < 4, device != nil else {
-            problem = "Не удалось подключиться к управлению"
+            problem = "Couldn't connect to the headphone controls. Is the Sony app open on another device?"
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in self?.openChannel() }
@@ -150,38 +241,44 @@ final class Headphones: NSObject, ObservableObject {
     fileprivate func channelOpened(_ ch: IOBluetoothRFCOMMChannel, status: IOReturn) {
         guard ch === channel else { return }
         guard status == kIOReturnSuccess else {
-            log("Канал не открылся: \(String(format: "0x%x", status))")
+            log("Channel failed to open: \(String(format: "0x%x", status))")
             retryOpen()
             return
         }
-        log("Канал открыт")
+        log("Channel open")
         send([Cmd.getProtocolInfo, 0x00])
-        // Some firmwares answer only after the handshake; ask for state right after it anyway.
+        // Some firmwares answer only after the handshake; ask for state anyway.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            guard let self, self.channel != nil, !self.isReady else { return }
-            self.requestState()
+            guard let self, self.channel != nil, !self.stateRequested else { return }
+            self.requestSupport()
         }
     }
 
     fileprivate func channelClosed(_ ch: IOBluetoothRFCOMMChannel) {
         guard ch === channel else { return }
-        log("Канал закрыт")
+        log("Channel closed")
         channel = nil
         isReady = false
+        stateRequested = false
         if device?.isConnected() == true { retryOpen() } else { detach() }
     }
 
     // MARK: - Sending
 
-    private func send(_ payload: [UInt8]) {
-        queue.append(payload)
+    private func send(_ payload: [UInt8], table2: Bool = false) {
+        queue.append((table2 ? [0xFF] : []) + payload)
         pump()
     }
 
+    /// Sends an arbitrary payload (used by `--dump`, which only sends GET requests).
+    func sendRaw(_ payload: [UInt8], table2: Bool = false) { send(payload, table2: table2) }
+
     private func pump() {
         guard !awaitingAck, channel != nil, !queue.isEmpty else { return }
-        let payload = queue.removeFirst()
-        write(MDR.pack(type: .dataMDR, seq: seq, payload: payload))
+        var payload = queue.removeFirst()
+        var type = MDR.DataType.dataMDR
+        if payload.first == 0xFF { payload.removeFirst(); type = .dataMDRNo2 }
+        write(MDR.pack(type: type, seq: seq, payload: payload))
         awaitingAck = true
         ackToken += 1
         let token = ackToken
@@ -198,7 +295,7 @@ final class Headphones: NSObject, ObservableObject {
         let r = data.withUnsafeMutableBytes { ptr in
             ch.writeSync(ptr.baseAddress, length: UInt16(ptr.count))
         }
-        if r != kIOReturnSuccess { log("Ошибка записи: \(String(format: "0x%x", r))") }
+        if r != kIOReturnSuccess { log("Write error: \(String(format: "0x%x", r))") }
     }
 
     // MARK: - Receiving
@@ -212,48 +309,190 @@ final class Headphones: NSObject, ObservableObject {
                 pump()
             case MDR.DataType.dataMDR.rawValue, MDR.DataType.dataMDRNo2.rawValue:
                 write(MDR.pack(type: .ack, seq: 1 &- frame.seq, payload: []))
-                if frame.type == MDR.DataType.dataMDR.rawValue { handle(frame.payload) }
+                onPayload?(frame.type, frame.payload)
+                if frame.type == MDR.DataType.dataMDR.rawValue { handle(frame.payload) } else { handleT2(frame.payload) }
             default:
                 break
             }
         }
     }
 
+    private func hex(_ p: [UInt8]) -> String { p.map { String(format: "%02x", $0) }.joined() }
+
     private func handle(_ p: [UInt8]) {
-        guard let cmd = p.first else { return }
+        guard p.count >= 2 else { return }
+        let cmd = p[0], type = p[1]
         switch cmd {
         case Cmd.retProtocolInfo:
-            log("Протокол: \(p.count >= 6 ? String(p[2...5].reduce(0) { $0 << 8 | Int($1) }, radix: 16) : "?")")
+            log("Protocol: \(p.count >= 6 ? String(p[2...5].reduce(0) { $0 << 8 | Int($1) }, radix: 16) : "?")")
+            requestSupport()
+
+        case Cmd.retSupport:
+            guard p.count >= 3 else { return }
+            var set = Set<UInt8>()
+            var i = 3
+            while i + 1 < p.count, set.count < Int(p[2]) { set.insert(p[i]); i += 2 }
+            supportT1 = set
+            log("Supported functions: \(set.count)")
             requestState()
+
+        case Cmd.retDeviceInfo:
+            var i = 2
+            if type == 0x01 { modelName = MDR.string(p, at: &i) }
+            if type == 0x02 { firmware = MDR.string(p, at: &i); log("Firmware \(firmware ?? "?")") }
+
+        case Cmd.commonRetStatus, Cmd.commonNtfyStatus:
+            if type == Cmd.codecInquiry, p.count >= 3 { codec = Self.codecName(p[2]) }
+
         case Cmd.powerRetStatus, Cmd.powerNtfyStatus:
-            guard p.count >= 4, p[1] == Cmd.powerBattery else { return }
+            guard p.count >= 4, type == Cmd.powerBattery else { return }
             battery = Int(p[2])
             charging = p[3] == 0x01
             isReady = true
-            log("Батарея: \(p[2])%\(charging ? ", заряжается" : "")")
+            log("Battery: \(p[2])%\(charging ? ", charging" : "")")
+
+        case Cmd.powerRetCapability:
+            if type == Cmd.powerAutoOffWearing, p.count >= 3 {
+                autoPowerOffOptions = Array(p.dropFirst(3).prefix(Int(p[2])))
+            }
+        case Cmd.powerRetParam, Cmd.powerNtfyParam:
+            if type == Cmd.powerAutoOffWearing, p.count >= 3 { autoPowerOff = p[2]; reply(cmd, type) }
+
         case Cmd.ncAsmRetParam, Cmd.ncAsmNtfyParam:
-            guard p.count >= 7, p[1] == Cmd.ncDualSeamless || p[1] == Cmd.ncDualSeamlessNA else {
-                log("Неизвестный формат шумоподавления: \(p.map { String(format: "%02x", $0) }.joined())")
+            if type == Cmd.ncAmbToggle {
+                if p.count >= 3 { ncButton = NcButtonCycle(rawValue: p[2]); reply(cmd, type) }
                 return
             }
-            ncType = p[1]
+            guard p.count >= 7, type == Cmd.ncDualSeamless || type == Cmd.ncDualSeamlessNA else {
+                log("Unknown NC format: \(hex(p))")
+                return
+            }
+            ncType = type
+            let old = mode
             lastNcParams = p
-            mode = p[3] == 0 ? .off : (p[4] == 0 ? .noiseCancelling : .ambient)
+            let newMode: SoundMode = p[3] == 0 ? .off : (p[4] == 0 ? .noiseCancelling : .ambient)
+            mode = newMode
             focusOnVoice = p[5] == 0x01
             if p[6] > 0 { ambientLevel = Double(p[6]) }
             isReady = true
-            log("Режим: \(mode.map { "\($0)" } ?? "?"), уровень \(p[6]), голос \(focusOnVoice)")
+            reply(cmd, type)
+            log("Mode: \(newMode), level \(p[6]), voice \(focusOnVoice)")
+            // A notification we didn't cause, that changes the mode: the left button was pressed.
+            if cmd == Cmd.ncAsmNtfyParam, old != nil, old != newMode,
+               Date().timeIntervalSince(lastNcSetAt) > 2 {
+                onLeftButton?(newMode)
+            }
+
+        case Cmd.eqRetCapability:
+            // [51, type, bandCount, stepCount, presetCount, (id, name)...]
+            guard p.count >= 5 else { return }
+            var presets: [EqPreset] = []
+            var i = 5
+            while i < p.count, presets.count < Int(p[4]) {
+                let id = p[i]; i += 1
+                _ = MDR.string(p, at: &i)
+                presets.append(EqPreset(id: id))
+            }
+            eqPresets = presets
+        case Cmd.eqRetStatus, Cmd.eqNtfyStatus:
+            if type == 0x00, p.count >= 3 { eqAvailable = p[2] == 0x00 }
+        case Cmd.eqRetParam, Cmd.eqNtfyParam:
+            guard type == 0x00, p.count >= 4 else { return }
+            eqPreset = p[2]
+            let n = Int(p[3])
+            if n == 6, p.count >= 4 + n { eqBands = p[4..<(4 + n)].map { Double(Int($0) - 10) } }
+            reply(cmd, type)
+
+        case Cmd.gsRetParam, Cmd.gsNtfyParam:
+            guard p.count >= 4 else { return }
+            if type == Cmd.gsTouchPanel { touchPanel = p[3] == 0x00 }
+            if type == Cmd.gsMultipoint { multipoint = p[3] == 0x00 }
+            reply(cmd, type)
+
+        case Cmd.audioRetParam, Cmd.audioNtfyParam:
+            guard p.count >= 3 else { return }
+            if type == Cmd.audioConnection { connectionPriority = p[2] }
+            if type == Cmd.audioUpscaling { dsee = p[2] == 0x01 }
+            reply(cmd, type)
+
+        case Cmd.systemRetCapability:
+            if type == Cmd.sysVoiceAssistant, p.count >= 4 {
+                voiceAssistantOptions = Array(p.dropFirst(4).prefix(Int(p[3])))
+            }
+        case Cmd.systemRetParam, Cmd.systemNtfyParam:
+            guard p.count >= 3 else { return }
+            switch type {
+            case Cmd.sysSpeakToChat: speakToChat = p[2] == 0x00
+            case Cmd.sysAutoPause: autoPause = p[2] == 0x00
+            case Cmd.sysVoiceAssistant: voiceAssistant = p[2]
+            default: break
+            }
+            reply(cmd, type)
+        case Cmd.systemRetExtParam, Cmd.systemNtfyExtParam:
+            if type == Cmd.sysSpeakToChat, p.count >= 4 {
+                stcSensitivity = p[2]; stcTimeout = p[3]; reply(cmd, type)
+            }
+
+        case Cmd.playRetParam, Cmd.playNtfyParam:
+            if type == Cmd.playVolume, p.count >= 3 { volume = Double(p[2]); volumeKnown = true; reply(cmd, type) }
+        case Cmd.playRetStatus, Cmd.playNtfyStatus:
+            if type == Cmd.playController, p.count >= 4 {
+                playback = [1: .playing, 2: .paused, 3: .stopped][p[3]] ?? .unknown
+                reply(cmd, type)
+            }
+
+        case Cmd.logNtfyParam:
+            // Time-series operation log: short strings such as "unitWear".
+            if type == 0x01 {
+                var i = 2
+                log("Headphone event: \(MDR.string(p, at: &i) ?? hex(p))")
+            }
+
         default:
             break
         }
     }
 
-    private func requestState() {
+    private func handleT2(_ p: [UInt8]) {
+        guard p.count >= 2 else { return }
+        switch p[0] {
+        case Cmd.retSupport:
+            var set = Set<UInt8>()
+            var i = 3
+            while p.count >= 3, i + 1 < p.count, set.count < Int(p[2]) { set.insert(p[i]); i += 2 }
+            supportT2 = set
+            if set.contains(Fn.t2VoiceGuidance) { send([Cmd.t2VoiceGuidanceGetParam, Cmd.vgOnOff], table2: true) }
+        case Cmd.t2VoiceGuidanceRetParam, Cmd.t2VoiceGuidanceNtfyParam:
+            if p[1] == Cmd.vgOnOff, p.count >= 3 { voiceGuidance = p[2] == 0x00; reply(p[0], p[1] | 0x80) }
+        default:
+            break
+        }
+    }
+
+    private func reply(_ cmd: UInt8, _ type: UInt8) { onReply?(cmd, type) }
+
+    static func codecName(_ b: UInt8) -> String? {
+        switch b {
+        case 0x01: return "SBC"
+        case 0x02: return "AAC"
+        case 0x10: return "LDAC"
+        case 0x20: return "aptX"
+        case 0x21: return "aptX HD"
+        case 0x30: return "LC3"
+        default: return nil
+        }
+    }
+
+    private func requestSupport() {
+        guard !stateRequested else { return }
+        stateRequested = true
+        send([Cmd.getSupport, 0x00])
+        send([Cmd.getSupport, 0x00], table2: true)
         send([Cmd.powerGetStatus, Cmd.powerBattery])
         send([Cmd.ncAsmGetParam, ncType])
-        // If the headphones use the noise-adaptive layout, the first request goes unanswered.
+        // Without a support list (old firmware) keep the original battery + NC behaviour.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self, self.channel != nil, self.lastNcParams == nil else { return }
+            guard let self, self.channel != nil, self.lastNcParams == nil, self.supportT1.isEmpty else { return }
             self.ncType = Cmd.ncDualSeamlessNA
             self.send([Cmd.ncAsmGetParam, self.ncType])
         }
@@ -264,19 +503,82 @@ final class Headphones: NSObject, ObservableObject {
         }
     }
 
+    /// Reads every setting the headphones say they support. GET requests only.
+    private func requestState() {
+        send([Cmd.getDeviceInfo, 0x01])
+        send([Cmd.getDeviceInfo, 0x02])
+        if supports(Fn.codec) { send([Cmd.commonGetStatus, Cmd.codecInquiry]) }
+        if supports(Fn.ncButton) { send([Cmd.ncAsmGetParam, Cmd.ncAmbToggle]) }
+        if supports(Fn.presetEq) {
+            send([Cmd.eqGetCapability, 0x00, 0x01])
+            send([Cmd.eqGetStatus, 0x00])
+            send([Cmd.eqGetParam, 0x00])
+        }
+        if supports(Fn.connectionMode) { send([Cmd.audioGetParam, Cmd.audioConnection]) }
+        if supports(Fn.dsee) { send([Cmd.audioGetParam, Cmd.audioUpscaling]) }
+        if supports(Fn.speakToChat) {
+            send([Cmd.systemGetParam, Cmd.sysSpeakToChat])
+            send([Cmd.systemGetExtParam, Cmd.sysSpeakToChat])
+        }
+        if supports(Fn.autoPause) { send([Cmd.systemGetParam, Cmd.sysAutoPause]) }
+        if supports(Fn.voiceAssistant) {
+            send([Cmd.systemGetCapability, Cmd.sysVoiceAssistant])
+            send([Cmd.systemGetParam, Cmd.sysVoiceAssistant])
+        }
+        if supports(Fn.autoPowerOffWearing) {
+            send([Cmd.powerGetCapability, Cmd.powerAutoOffWearing])
+            send([Cmd.powerGetParam, Cmd.powerAutoOffWearing])
+        }
+        if supports(Fn.gs1) { send([Cmd.gsGetParam, Cmd.gsTouchPanel]) }
+        if supports(Fn.gs2) { send([Cmd.gsGetParam, Cmd.gsMultipoint]) }
+        if supports(Fn.playback) {
+            send([Cmd.playGetParam, Cmd.playVolume])
+            send([Cmd.playGetStatus, Cmd.playController])
+        }
+        // Wear/remove and similar events, if the firmware reports any, go to the log.
+        if supports(Fn.timeSeriesLog) { send([Cmd.logSetStatus, 0x01, 0x00]) }
+    }
+
     /// Sample state for `--snapshot` renders.
     func loadSampleState(mode: SoundMode) {
         name = "WH-1000XM5"
         battery = 85
-        mode == .ambient ? (charging = false) : (charging = true)
+        charging = mode != .ambient
         self.mode = mode
         ambientLevel = 14
         focusOnVoice = true
         isPresent = true
         isReady = true
+        modelName = "WH-1000XM5"
+        firmware = "2.3.1"
+        codec = "AAC"
+        supportT1 = [Fn.codec, Fn.powerOff, Fn.autoPowerOffWearing, Fn.gs1, Fn.gs2, Fn.presetEq, Fn.ncDual,
+                     Fn.ncButton, Fn.playback, Fn.connectionMode, Fn.dsee, Fn.voiceAssistant, Fn.autoPause,
+                     Fn.speakToChat]
+        supportT2 = [Fn.t2VoiceGuidance]
+        ncButton = .ncAmbient
+        eqPresets = [0x00, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0xA0, 0xA1, 0xA2].map(EqPreset.init)
+        eqPreset = 0x16
+        eqBands = [3, 2, 1, 0, 1, 2]
+        dsee = true
+        connectionPriority = 0
+        speakToChat = false
+        stcSensitivity = 0
+        stcTimeout = 1
+        autoPause = true
+        autoPowerOff = 0x10
+        autoPowerOffOptions = [0x10, 0x11]
+        voiceAssistant = 0xFF
+        voiceAssistantOptions = [0x30, 0x31, 0x32, 0xFF]
+        touchPanel = true
+        multipoint = true
+        voiceGuidance = true
+        volume = 15
+        volumeKnown = true
+        playback = .playing
     }
 
-    // MARK: - Controls
+    // MARK: - Controls (each only after the headphones listed the function as supported)
 
     func setMode(_ newMode: SoundMode) {
         mode = newMode
@@ -293,6 +595,19 @@ final class Headphones: NSObject, ObservableObject {
         sendNc()
     }
 
+    /// Next mode in the order the left button uses.
+    func cycleMode() {
+        let order: [SoundMode]
+        switch ncButton ?? .all {
+        case .all: order = [.noiseCancelling, .ambient, .off]
+        case .ncAmbient: order = [.noiseCancelling, .ambient]
+        case .ncOff: order = [.noiseCancelling, .off]
+        case .ambientOff: order = [.ambient, .off]
+        }
+        let i = mode.flatMap { order.firstIndex(of: $0) } ?? -1
+        setMode(order[(i + 1) % order.count])
+    }
+
     private func sendNc() {
         guard let mode else { return }
         var p = lastNcParams ?? [Cmd.ncAsmRetParam, ncType, 0x01, 0x01, 0x00, 0x00, 0x0A]
@@ -306,7 +621,114 @@ final class Headphones: NSObject, ObservableObject {
         var stored = p
         stored[0] = Cmd.ncAsmRetParam
         lastNcParams = stored
+        lastNcSetAt = Date()
         send(p)
+    }
+
+    func setNcButton(_ cycle: NcButtonCycle) {
+        guard supports(Fn.ncButton) else { return }
+        ncButton = cycle
+        send([Cmd.ncAsmSetParam, Cmd.ncAmbToggle, cycle.rawValue])
+    }
+
+    func setEqPreset(_ id: UInt8) {
+        guard supports(Fn.presetEq) else { return }
+        eqPreset = id
+        send([Cmd.eqSetParam, 0x00, id, 0x00])
+        send([Cmd.eqGetParam, 0x00])
+    }
+
+    /// Sends the six band values (Clear Bass + 5 bands). Editing bands selects a custom slot.
+    func commitEqBands() {
+        guard supports(Fn.presetEq) else { return }
+        let custom: Set<UInt8> = [0xA0, 0xA1, 0xA2, 0xA3]
+        let target = eqPreset.flatMap { custom.contains($0) ? $0 : nil } ?? 0xA0
+        eqPreset = target
+        let steps = eqBands.map { UInt8(max(0, min(20, Int($0.rounded()) + 10))) }
+        send([Cmd.eqSetParam, 0x00, target, UInt8(steps.count)] + steps)
+        send([Cmd.eqGetParam, 0x00])
+    }
+
+    func setDsee(_ on: Bool) {
+        guard supports(Fn.dsee) else { return }
+        dsee = on
+        send([Cmd.audioSetParam, Cmd.audioUpscaling, on ? 0x01 : 0x00])
+    }
+
+    func setConnectionPriority(_ v: UInt8) {
+        guard supports(Fn.connectionMode) else { return }
+        connectionPriority = v
+        send([Cmd.audioSetParam, Cmd.audioConnection, v])
+    }
+
+    func setSpeakToChat(_ on: Bool) {
+        guard supports(Fn.speakToChat) else { return }
+        speakToChat = on
+        send([Cmd.systemSetParam, Cmd.sysSpeakToChat, on ? 0x00 : 0x01, 0x01])
+    }
+
+    func setSpeakToChat(sensitivity: UInt8? = nil, timeout: UInt8? = nil) {
+        guard supports(Fn.speakToChat) else { return }
+        if let sensitivity { stcSensitivity = sensitivity }
+        if let timeout { stcTimeout = timeout }
+        send([Cmd.systemSetExtParam, Cmd.sysSpeakToChat, stcSensitivity ?? 0, stcTimeout ?? 1])
+    }
+
+    func setAutoPause(_ on: Bool) {
+        guard supports(Fn.autoPause) else { return }
+        autoPause = on
+        send([Cmd.systemSetParam, Cmd.sysAutoPause, on ? 0x00 : 0x01])
+    }
+
+    func setVoiceAssistant(_ v: UInt8) {
+        guard supports(Fn.voiceAssistant) else { return }
+        voiceAssistant = v
+        send([Cmd.systemSetParam, Cmd.sysVoiceAssistant, v])
+    }
+
+    func setAutoPowerOff(_ v: UInt8) {
+        guard supports(Fn.autoPowerOffWearing) else { return }
+        autoPowerOff = v
+        send([Cmd.powerSetParam, Cmd.powerAutoOffWearing, v, 0x00])
+    }
+
+    func setTouchPanel(_ on: Bool) {
+        guard supports(Fn.gs1) else { return }
+        touchPanel = on
+        send([Cmd.gsSetParam, Cmd.gsTouchPanel, 0x00, on ? 0x00 : 0x01])
+    }
+
+    func setMultipoint(_ on: Bool) {
+        guard supports(Fn.gs2) else { return }
+        multipoint = on
+        send([Cmd.gsSetParam, Cmd.gsMultipoint, 0x00, on ? 0x00 : 0x01])
+    }
+
+    func setVoiceGuidance(_ on: Bool) {
+        guard supportT2.contains(Fn.t2VoiceGuidance) else { return }
+        voiceGuidance = on
+        send([Cmd.t2VoiceGuidanceSetParam, Cmd.vgOnOff, on ? 0x00 : 0x01], table2: true)
+    }
+
+    /// Headphone volume, 0…30. Call when the slider is released.
+    func commitVolume() {
+        guard supports(Fn.playback) else { return }
+        send([Cmd.playSetParam, Cmd.playVolume, UInt8(max(0, min(30, volume.rounded())))])
+    }
+
+    enum PlayControl: UInt8 { case pause = 0x01, next = 0x02, previous = 0x03, play = 0x07 }
+
+    /// Asks the headphones to send the command to the playing device (AVRCP), like a touch would.
+    func playControl(_ c: PlayControl) {
+        guard supports(Fn.playback) else { return }
+        send([Cmd.playSetStatus, Cmd.playController, 0x00, c.rawValue])
+    }
+
+    func togglePlayback() { playControl(playback == .playing ? .pause : .play) }
+
+    func powerOff() {
+        guard supports(Fn.powerOff) else { return }
+        send([Cmd.powerSetStatus, Cmd.powerOff, 0x01])
     }
 }
 
