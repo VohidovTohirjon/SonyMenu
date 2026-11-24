@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
-// MARK: - Tokens from «Мой стиль»
+// MARK: - Design tokens
 
 extension Color {
     init(light: UInt32, dark: UInt32) {
