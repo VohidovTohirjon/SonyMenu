@@ -38,6 +38,47 @@ if args.contains("--dump") {
 } else if args.contains("--selftest") {
     MainActor.assumeIsolated { SelfTest(emit: makeReportSink()).run() }
     RunLoop.main.run()
+} else if args.contains("--listentest") {
+    // Feeds a spoken test file through the real recogniser and checks the phrase is heard.
+    MainActor.assumeIsolated {
+        let emit = makeReportSink()
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let dir = FileManager.default.temporaryDirectory
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        var cases: [(String, Bool)] = [("please remember to buy milk. stop dictation", true),
+                                       ("we should stop here and talk about dinner", false)]
+        @MainActor func next() {
+            guard !cases.isEmpty else { emit("listen test done"); exit(0) }
+            let (sentence, expected) = cases.removeFirst()
+            let file = dir.appendingPathComponent("sonymenu-listen-\(cases.count).aiff")
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+            p.arguments = ["-o", file.path, sentence]
+            try? p.run(); p.waitUntilExit()
+            let l = StopPhraseListener.shared
+            var done = false
+            l.log = { emit("  • " + $0) }
+            l.testAudio = file
+            l.onHeard = {
+                done = true
+                emit("\(expected ? "PASS" : "FAIL")  \"\(sentence)\": heard the phrase")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { next() }
+            }
+            l.enabled = true
+            l.start()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                guard !done else { return }
+                l.stop()
+                emit("\(expected ? "FAIL" : "PASS")  \"\(sentence)\": no phrase heard")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { next() }
+            }
+        }
+        _ = say
+        next()
+    }
+    RunLoop.main.run()
 } else if args.contains("--mediatest") {
     MainActor.assumeIsolated { MediaTest(emit: makeReportSink()).run() }
     RunLoop.main.run()

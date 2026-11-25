@@ -13,14 +13,19 @@ import Speech
 final class StopPhraseListener {
     static let shared = StopPhraseListener()
     var log: (String) -> Void = { _ in }
+    /// Test mode: report hearing the phrase instead of pressing keys.
+    var onHeard: (() -> Void)?
+    /// Test mode: read this audio file instead of the microphone.
+    var testAudio: URL?
 
     private(set) var isListening = false
-    private var engine: AVAudioEngine?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
+    private var session: AVCaptureSession?
+    private var sink: SampleSink?
+    private var analyzer: SpeechAnalyzer?
+    private var feed: AsyncStream<AnalyzerInput>.Continuation?
+    private var generation: UUID?
+    private let audioQueue = DispatchQueue(label: "local.sonymenu.stopphrase")
     private var timeout: DispatchWorkItem?
-    private var restarts = 0
-    private var startedAt = Date.distantPast
     /// The longest a dictation can run before we stop listening for the phrase.
     private let maxListen: TimeInterval = 10 * 60
 
@@ -45,23 +50,15 @@ final class StopPhraseListener {
 
     func start() {
         guard enabled, !isListening else { return }
-        restarts = 0
-        startedAt = Date()
         timeout?.cancel()
         let t = DispatchWorkItem { [weak self] in self?.stop() }
         timeout = t
         DispatchQueue.main.asyncAfter(deadline: .now() + maxListen, execute: t)
-        SFSpeechRecognizer.requestAuthorization { status in
+        if testAudio != nil { begin(); return }
+        // Only the microphone needs a permission; on-device recognition doesn't.
+        AVCaptureDevice.requestAccess(for: .audio) { ok in
             Task { @MainActor in
-                guard status == .authorized else {
-                    self.log("Stop phrase off: Speech Recognition isn't allowed for SonyMenu")
-                    return
-                }
-                AVCaptureDevice.requestAccess(for: .audio) { ok in
-                    Task { @MainActor in
-                        if ok { self.begin() } else { self.log("Stop phrase off: microphone isn't allowed for SonyMenu") }
-                    }
-                }
+                if ok { self.begin() } else { self.log("Stop phrase off: microphone isn't allowed for SonyMenu") }
             }
         }
     }
@@ -69,73 +66,97 @@ final class StopPhraseListener {
     func stop() {
         guard isListening else { return }
         timeout?.cancel()
-        pauseForRestart()
+        isListening = false
+        generation = nil
+        session?.stopRunning()
+        feed?.finish()
+        if let analyzer { Task { await analyzer.cancelAndFinishNow() } }
+        session = nil; sink = nil; feed = nil; analyzer = nil
         log("Stopped listening for \"stop dictation\"")
     }
 
-    /// Tears down the current recognition without ending the listening session's deadline.
-    private func pauseForRestart() {
-        isListening = false
-        task?.cancel()
-        request?.endAudio()
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
-        engine = nil; request = nil; task = nil
-    }
-
+    /// Uses macOS 26's on-device SpeechTranscriber, which works with Siri and Dictation turned
+    /// off and without the Speech Recognition permission.
     private func begin() {
-        let locale = Locale(identifier: "en-US")
-        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
-            log("Stop phrase off: speech recognition isn't available"); return
+        guard SpeechTranscriber.isAvailable else {
+            log("Stop phrase off: on-device speech recognition isn't available on this Mac"); return
         }
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        guard recognizer.supportsOnDeviceRecognition else {
-            log("Stop phrase off: on-device speech recognition isn't available (won't send audio to a server)"); return
-        }
-        guard let mic = Self.builtInMicrophone(), let unit = input.audioUnit else {
+        let mic = Self.builtInMicrophone()
+        guard testAudio != nil || mic != nil else {
             log("Stop phrase off: no built-in microphone (won't use the headphones' mic)"); return
         }
-        var id = mic
-        var current = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                   &id, size) == noErr,
-              AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                   &current, &size) == noErr,
-              current == mic else {
-            log("Stop phrase off: couldn't select the built-in microphone"); return
-        }
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = true
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0 else { log("Stop phrase off: microphone gave no audio"); return }
-        input.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.feeder(request))
-        do { try engine.start() } catch {
-            input.removeTap(onBus: 0)
-            log("Stop phrase off: \(error.localizedDescription)"); return
-        }
-        self.engine = engine
-        self.request = request
+        let generation = UUID()
+        self.generation = generation
         isListening = true
-        log("Listening for \"stop dictation\" (built-in mic, on this Mac)")
-        task = recognizer.recognitionTask(with: request, resultHandler: Self.handler { [weak self] text, failed in
-            guard let self, self.isListening else { return }
-            if Self.endsWithStopPhrase(text) {
-                self.heard()
-            } else if failed {
-                // Recognition ends after a long pause; keep listening while dictation runs.
-                self.restarts += 1
-                self.pauseForRestart()
-                if self.restarts <= 20, Date().timeIntervalSince(self.startedAt) < self.maxListen { self.begin() } else { self.log("Stop phrase gave up after repeated recognition errors") }
+        Task { @MainActor in
+            do {
+                guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else {
+                    throw Problem("English isn't supported by on-device recognition")
+                }
+                let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [],
+                                                    reportingOptions: [.volatileResults, .fastResults],
+                                                    attributeOptions: [])
+                if let install = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                    log("Downloading Apple's on-device English speech model (one time)")
+                    try await install.downloadAndInstall()
+                }
+                guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else {
+                    throw Problem("no audio format for on-device recognition")
+                }
+                guard self.generation == generation else { return }
+                let (stream, feed) = AsyncStream<AnalyzerInput>.makeStream()
+                let analyzer = SpeechAnalyzer(modules: [transcriber])
+                try await analyzer.start(inputSequence: stream)
+                self.analyzer = analyzer
+                self.feed = feed
+                let sink = SampleSink(target: format, feed: feed)
+                self.sink = sink
+
+                if let file = testAudio {
+                    let queue = audioQueue
+                    queue.async { sink.play(file) }
+                    log("Listening for \"stop dictation\" (test audio file)")
+                } else if let mic {
+                    // A capture session reads this one mic directly, without touching the default input.
+                    let session = AVCaptureSession()
+                    let output = AVCaptureAudioDataOutput()
+                    output.setSampleBufferDelegate(sink, queue: audioQueue)
+                    guard let input = try? AVCaptureDeviceInput(device: mic), session.canAddInput(input),
+                          session.canAddOutput(output) else { throw Problem("couldn't open the built-in microphone") }
+                    session.addInput(input)
+                    session.addOutput(output)
+                    session.startRunning()
+                    guard session.isRunning else { throw Problem("the built-in microphone didn't start") }
+                    self.session = session
+                    log("Listening for \"stop dictation\" (built-in mic, on this Mac)")
+                }
+
+                var finished = ""
+                for try await result in transcriber.results {
+                    guard self.generation == generation, self.isListening else { break }
+                    let text = String(result.text.characters)
+                    if result.isFinal { finished = String((finished + " " + text).suffix(400)) }
+                    let heardSoFar = result.isFinal ? finished : finished + " " + text
+                    if self.onHeard != nil { log("heard: \(heardSoFar.trimmingCharacters(in: .whitespaces))") }
+                    if Self.endsWithStopPhrase(heardSoFar) { self.heard(); break }
+                }
+            } catch {
+                guard self.generation == generation else { return }
+                log("Stop phrase off: \(error.localizedDescription)")
+                self.stop()
             }
-        })
+        }
+    }
+
+    private struct Problem: LocalizedError {
+        let errorDescription: String?
+        init(_ text: String) { errorDescription = text }
     }
 
     private func heard() {
         log("Heard \"stop dictation\": finishing dictation")
         stop()
+        if let onHeard { onHeard(); return }
         Self.tapOption() // Dictator: one more press of the shortcut pastes
         removePhraseWhenPasted()
     }
@@ -157,19 +178,9 @@ final class StopPhraseListener {
 
     // MARK: System helpers
 
-    /// Audio and recognition callbacks run off the main thread, so they're built outside the
-    /// main actor and only hop back to it.
-    nonisolated static func feeder(_ request: SFSpeechAudioBufferRecognitionRequest) -> AVAudioNodeTapBlock {
-        { buffer, _ in request.append(buffer) }
-    }
-
-    nonisolated static func handler(_ onMain: @escaping @MainActor (String, Bool) -> Void)
-        -> (SFSpeechRecognitionResult?, Error?) -> Void {
-        { result, error in
-            let text = result?.bestTranscription.formattedString ?? ""
-            let failed = error != nil
-            Task { @MainActor in onMain(text, failed) }
-        }
+    static func describe(_ s: AVAuthorizationStatus) -> String {
+        switch s { case .authorized: "allowed"; case .denied: "denied"; case .restricted: "restricted"
+        case .notDetermined: "not asked yet"; @unknown default: "unknown" }
     }
 
     static func tapOption() {
@@ -214,30 +225,70 @@ final class StopPhraseListener {
     }
 
     /// The Mac's own microphone (never a Bluetooth one).
-    static func builtInMicrophone() -> AudioDeviceID? {
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
-                                              mScope: kAudioObjectPropertyScopeGlobal,
-                                              mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr
-        else { return nil }
-        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr
-        else { return nil }
-        for id in ids {
-            var t = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType,
-                                               mScope: kAudioObjectPropertyScopeGlobal,
-                                               mElement: kAudioObjectPropertyElementMain)
-            var transport: UInt32 = 0
-            var tsize = UInt32(MemoryLayout<UInt32>.size)
-            guard AudioObjectGetPropertyData(id, &t, 0, nil, &tsize, &transport) == noErr,
-                  transport == kAudioDeviceTransportTypeBuiltIn else { continue }
-            var s = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
-                                               mScope: kAudioDevicePropertyScopeInput,
-                                               mElement: kAudioObjectPropertyElementMain)
-            var ssize: UInt32 = 0
-            if AudioObjectGetPropertyDataSize(id, &s, 0, nil, &ssize) == noErr, ssize > 0 { return id }
+    static func builtInMicrophone() -> AVCaptureDevice? {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone], mediaType: .audio, position: .unspecified)
+            .devices.first { $0.transportType == Int32(bitPattern: kAudioDeviceTransportTypeBuiltIn) }
+    }
+}
+
+/// Converts microphone audio to the analyzer's format, on the capture queue.
+final class SampleSink: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+    private let target: AVAudioFormat
+    private let feed: AsyncStream<AnalyzerInput>.Continuation
+    private var converter: AVAudioConverter?
+    init(target: AVAudioFormat, feed: AsyncStream<AnalyzerInput>.Continuation) {
+        self.target = target; self.feed = feed
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard let pcm = Self.pcmBuffer(sampleBuffer), let out = convert(pcm) else { return }
+        feed.yield(AnalyzerInput(buffer: out))
+    }
+
+    /// Test mode: plays an audio file in real time, then a few seconds of silence.
+    func play(_ url: URL) {
+        guard let file = try? AVAudioFile(forReading: url) else { return }
+        while file.framePosition < file.length {
+            guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1600),
+                  (try? file.read(into: buf)) != nil, buf.frameLength > 0, let out = convert(buf) else { break }
+            feed.yield(AnalyzerInput(buffer: out))
+            usleep(UInt32(Double(buf.frameLength) / file.processingFormat.sampleRate * 1_000_000))
         }
-        return nil
+        if let silence = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: AVAudioFrameCount(target.sampleRate / 10)) {
+            silence.frameLength = silence.frameCapacity
+            for _ in 0..<40 { feed.yield(AnalyzerInput(buffer: silence)); usleep(100_000) }
+        }
+    }
+
+    private func convert(_ input: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        if input.format == target { return input }
+        if converter == nil || converter?.inputFormat != input.format {
+            converter = AVAudioConverter(from: input.format, to: target)
+        }
+        guard let converter else { return nil }
+        let ratio = target.sampleRate / input.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 64
+        guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return nil }
+        var given = false
+        var error: NSError?
+        let status = converter.convert(to: out, error: &error) { _, outStatus in
+            if given { outStatus.pointee = .noDataNow; return nil }
+            given = true
+            outStatus.pointee = .haveData
+            return input
+        }
+        return (status == .error || out.frameLength == 0) ? nil : out
+    }
+
+    static func pcmBuffer(_ sb: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        guard let desc = CMSampleBufferGetFormatDescription(sb) else { return nil }
+        let format = AVAudioFormat(cmAudioFormatDescription: desc)
+        let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sb))
+        guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
+        buffer.frameLength = frames
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(sb, at: 0, frameCount: Int32(frames),
+                                                                 into: buffer.mutableAudioBufferList)
+        return status == noErr ? buffer : nil
     }
 }
