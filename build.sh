@@ -32,7 +32,7 @@ case "${1:-}" in
     mkdir -p ~/Applications
     # Quit normally so the headphone control channel is closed (a killed app leaves it
     # open and the next launch waits for it to time out).
-    osascript -e 'tell application id "local.sonymenu" to quit' 2>/dev/null || true
+    ( osascript -e 'tell application id "local.sonymenu" to quit' >/dev/null 2>&1 &) ; sleep 2
     sleep 1
     pkill -x SonyMenu 2>/dev/null || true
     rm -rf ~/Applications/SonyMenu.app
