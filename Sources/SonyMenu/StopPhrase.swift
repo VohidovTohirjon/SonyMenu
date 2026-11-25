@@ -20,6 +20,7 @@ final class StopPhraseListener {
     private var task: SFSpeechRecognitionTask?
     private var timeout: DispatchWorkItem?
     private var restarts = 0
+    private var startedAt = Date.distantPast
     /// The longest a dictation can run before we stop listening for the phrase.
     private let maxListen: TimeInterval = 10 * 60
 
@@ -45,6 +46,11 @@ final class StopPhraseListener {
     func start() {
         guard enabled, !isListening else { return }
         restarts = 0
+        startedAt = Date()
+        timeout?.cancel()
+        let t = DispatchWorkItem { [weak self] in self?.stop() }
+        timeout = t
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxListen, execute: t)
         SFSpeechRecognizer.requestAuthorization { status in
             Task { @MainActor in
                 guard status == .authorized else {
@@ -62,14 +68,19 @@ final class StopPhraseListener {
 
     func stop() {
         guard isListening else { return }
-        isListening = false
         timeout?.cancel()
+        pauseForRestart()
+        log("Stopped listening for \"stop dictation\"")
+    }
+
+    /// Tears down the current recognition without ending the listening session's deadline.
+    private func pauseForRestart() {
+        isListening = false
         task?.cancel()
         request?.endAudio()
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil; request = nil; task = nil
-        log("Stopped listening for \"stop dictation\"")
     }
 
     private func begin() {
@@ -79,16 +90,25 @@ final class StopPhraseListener {
         }
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        if let mic = Self.builtInMicrophone(), let unit = input.audioUnit {
-            var id = mic
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
-        } else {
+        guard recognizer.supportsOnDeviceRecognition else {
+            log("Stop phrase off: on-device speech recognition isn't available (won't send audio to a server)"); return
+        }
+        guard let mic = Self.builtInMicrophone(), let unit = input.audioUnit else {
             log("Stop phrase off: no built-in microphone (won't use the headphones' mic)"); return
+        }
+        var id = mic
+        var current = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                   &id, size) == noErr,
+              AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                   &current, &size) == noErr,
+              current == mic else {
+            log("Stop phrase off: couldn't select the built-in microphone"); return
         }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        request.requiresOnDeviceRecognition = true
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { log("Stop phrase off: microphone gave no audio"); return }
         input.installTap(onBus: 0, bufferSize: 2048, format: format, block: Self.feeder(request))
@@ -107,13 +127,10 @@ final class StopPhraseListener {
             } else if failed {
                 // Recognition ends after a long pause; keep listening while dictation runs.
                 self.restarts += 1
-                self.stop()
-                if self.restarts <= 20 { self.begin() } else { self.log("Stop phrase gave up after repeated recognition errors") }
+                self.pauseForRestart()
+                if self.restarts <= 20, Date().timeIntervalSince(self.startedAt) < self.maxListen { self.begin() } else { self.log("Stop phrase gave up after repeated recognition errors") }
             }
         })
-        let t = DispatchWorkItem { [weak self] in self?.stop() }
-        timeout = t
-        DispatchQueue.main.asyncAfter(deadline: .now() + maxListen, execute: t)
     }
 
     private func heard() {
