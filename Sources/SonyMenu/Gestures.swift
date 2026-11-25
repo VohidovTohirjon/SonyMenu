@@ -518,7 +518,16 @@ final class GestureController: ObservableObject {
         case .ambient: headphones?.setMode(.ambient)
         case .speakToChat:
             if let hp = headphones, let on = hp.speakToChat { hp.setSpeakToChat(!on) }
-        case .doubleTapOption: Self.doubleTapOption()
+        case .doubleTapOption:
+            let listener = StopPhraseListener.shared
+            listener.log = { [weak self] in self?.log($0) }
+            if listener.isListening {
+                listener.stop() // the button finishes dictation itself
+                Self.doubleTapOption()
+            } else {
+                Self.doubleTapOption()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { listener.start() }
+            }
         case .shortcut:
             if let g, let s = shortcuts[g] { Self.press(s) } else { log("No shortcut recorded") }
         case .openApp:

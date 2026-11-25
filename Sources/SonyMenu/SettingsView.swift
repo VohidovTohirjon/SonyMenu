@@ -308,6 +308,11 @@ private struct ControlsTab: View {
             gestureSection("Left earcup (NC/AMB button)", Gesture.allCases.filter(\.isLeft))
 
             Section {
+                Toggle(isOn: Binding(get: { StopPhraseListener.shared.enabled },
+                                     set: { StopPhraseListener.shared.enabled = $0 })) {
+                    Text("Say \u{201C}stop dictation\u{201D} to finish dictating")
+                    Text("After a headphone gesture starts Dictator, saying it pastes your words without the phrase. Listens on the Mac's own mic, on this Mac only.")
+                }
                 Toggle(isOn: $gestures.includeKeyboard) {
                     Text("Also treat the keyboard's media keys as these gestures")
                     Text("Off: keyboard Play/Next/Previous keys work as usual.")

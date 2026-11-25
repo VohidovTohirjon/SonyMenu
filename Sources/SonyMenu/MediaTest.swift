@@ -45,6 +45,19 @@ final class MediaTest {
     private func cases() async {
         await wait(1.5) // let macOS make us the Now Playing app
 
+        // "stop dictation" phrase matching (pure logic).
+        let phrases: [(String, Bool, Int)] = [
+            ("Please buy milk stop dictation", true, 15), ("Stop dictation.", true, 15),
+            ("we should stop here and talk", false, 0), ("stop", false, 0),
+            ("Stop dictation, then continue", false, 0), ("send it. Stop Dictation!", true, 16),
+            ("non-stop dictation", false, 0), ("I said stop", false, 0),
+        ]
+        for (text, ends, len) in phrases {
+            let ok = StopPhraseListener.endsWithStopPhrase(text) == ends && StopPhraseListener.phraseSuffixLength(text) == len
+            if ok { passed += 1 } else { failed += 1 }
+            emit("\(ok ? "PASS" : "FAIL")  Stop phrase in \"\(text)\": ends=\(StopPhraseListener.endsWithStopPhrase(text)) cut=\(StopPhraseListener.phraseSuffixLength(text))")
+        }
+
         gc.testMap = [:]
         // What the XM5 really does today: reports the gesture, sends no media key to the Mac.
         await check("Double tap (report only) → play/pause", expect: ["toggle": 1], within: 0.2) {
