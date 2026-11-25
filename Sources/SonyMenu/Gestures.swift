@@ -342,7 +342,7 @@ final class GestureController: ObservableObject {
             return true
         case (.previousSong, "opPrev"):
             log("Headphones sent opPrev; one more previous to reach the previous song")
-            Self.postKey(MediaKey.previous)
+            Self.play(.previous, else: MediaKey.previous)
             return true
         default:
             return false
@@ -500,15 +500,16 @@ final class GestureController: ObservableObject {
     func perform(_ a: MacAction, for g: Gesture? = nil) {
         switch a {
         case .keepDefault, .nothing: break
-        case .playPause: Self.postKey(MediaKey.play)
-        case .pause:
-            if !MediaRemote.send(.pause) { Self.postKey(MediaKey.play) }
-        case .next: Self.postKey(MediaKey.next)
-        case .previous: Self.postKey(MediaKey.previous)
+        // Playback goes straight to the Now Playing app (no media key, so macOS shows no popup);
+        // the media key is only the fallback if that isn't available.
+        case .playPause: Self.play(.toggle, else: MediaKey.play)
+        case .pause: Self.play(.pause, else: MediaKey.play)
+        case .next: Self.play(.next, else: MediaKey.next)
+        case .previous: Self.play(.previous, else: MediaKey.previous)
         case .previousSong:
             // Most players restart the song on the first "previous"; the second one goes back.
-            Self.postKey(MediaKey.previous)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { Self.postKey(MediaKey.previous) }
+            Self.play(.previous, else: MediaKey.previous)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { Self.play(.previous, else: MediaKey.previous) }
         case .volumeUp: Self.postKey(MediaKey.soundUp)
         case .volumeDown: Self.postKey(MediaKey.soundDown)
         case .mute: Self.postKey(MediaKey.mute)
@@ -552,6 +553,10 @@ final class GestureController: ObservableObject {
         }
     }
 
+    static func play(_ c: MediaRemote.Command, else key: Int32) {
+        if !MediaRemote.send(c) { postKey(key) }
+    }
+
     /// Posts a media key press, so browsers (YouTube) and music apps get it via Now Playing.
     static func postKey(_ key: Int32) {
         for down in [true, false] {
@@ -589,7 +594,7 @@ private func mediaKeyCallback(proxy: CGEventTapProxy, type: CGEventType, event: 
 
 /// MediaRemote (private framework) for a real "pause" that doesn't toggle.
 enum MediaRemote {
-    enum Command: Int32 { case play = 0, pause = 1 }
+    enum Command: Int32 { case play = 0, pause = 1, toggle = 2, next = 4, previous = 5 }
 
     private typealias SendFn = @convention(c) (Int32, CFDictionary?) -> Bool
     private static let send: SendFn? = {
