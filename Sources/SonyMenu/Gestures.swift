@@ -526,7 +526,7 @@ final class GestureController: ObservableObject {
                 Self.doubleTapOption()
             } else {
                 Self.doubleTapOption()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { listener.start() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { listener.start() } // after Dictator has the mic
             }
         case .shortcut:
             if let g, let s = shortcuts[g] { Self.press(s) } else { log("No shortcut recorded") }
