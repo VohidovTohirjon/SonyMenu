@@ -84,7 +84,7 @@ if args.contains("--dump") {
             if line.hasPrefix("Removed") || line.hasPrefix("Dictator's text") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     let text = board.changeCount != before ? (board.string(forType: .string) ?? "") : "(clipboard unchanged)"
-                    emit("Clipboard now: \(text)")
+                    emit("Clipboard changed: \(board.changeCount != before), \(text.count) characters, still ends with the phrase: \(StopPhraseListener.endsWithStopPhrase(text))")
                     let ok = line.hasPrefix("Removed") && text.lowercased().contains("milk") && !StopPhraseListener.endsWithStopPhrase(text)
                     emit(ok ? "PASS" : "FAIL")
                     exit(ok ? 0 : 1)
