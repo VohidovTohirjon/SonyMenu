@@ -241,6 +241,7 @@ final class GestureController: ObservableObject {
 
     func start() {
         headphones?.onEvent = { [weak self] key in self?.handleEvent(key) }
+        StopPhraseListener.shared.log = { [weak self] in self?.log($0) }
         // The tap runs only while the control link is live, so media keys never wait on the app
         // when it can't match them to a gesture anyway.
         readyWatch = headphones?.$isReady.removeDuplicates().dropFirst()
@@ -520,7 +521,6 @@ final class GestureController: ObservableObject {
             if let hp = headphones, let on = hp.speakToChat { hp.setSpeakToChat(!on) }
         case .doubleTapOption:
             let listener = StopPhraseListener.shared
-            listener.log = { [weak self] in self?.log($0) }
             if listener.isListening {
                 listener.stop() // the button finishes dictation itself
                 Self.doubleTapOption()

@@ -157,22 +157,37 @@ final class StopPhraseListener {
         log("Heard \"stop dictation\": finishing dictation")
         stop()
         if let onHeard { onHeard(); return }
-        Self.tapOption() // Dictator: one more press of the shortcut pastes
-        removePhraseWhenPasted()
+        let clipboardBefore = NSPasteboard.general.changeCount
+        GestureController.doubleTapOption() // Dictator: the same double tap ends hands-free dictation
+        removePhrase(clipboardBefore: clipboardBefore)
     }
 
-    /// Dictator pastes after its clean-up, about a second later. Wait for the text to end with
-    /// the phrase in the focused field, then delete just the phrase.
-    private func removePhraseWhenPasted(attempt: Int = 0) {
-        guard attempt < 32 else { log("Pasted text didn't end with the phrase; left it as is"); return }
+    /// Dictator finishes about a second later: with "Copy instead of pasting" on it puts the
+    /// words on the clipboard, otherwise it pastes them. Wait for either, then take the phrase
+    /// off the end.
+    private func removePhrase(clipboardBefore: Int, attempt: Int = 0) {
+        guard attempt < 120 else { log("Dictator's text didn't end with the phrase; left it as is"); return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            guard let (value, caretAtEnd) = Self.focusedText() else {
-                self.removePhraseWhenPasted(attempt: attempt + 1); return
+            let board = NSPasteboard.general
+            if board.changeCount != clipboardBefore, let text = board.string(forType: .string) {
+                let n = Self.phraseSuffixLength(text)
+                if n > 0 {
+                    let cleaned = String(text.dropLast(n))
+                    board.clearContents()
+                    board.setString(cleaned, forType: .string)
+                    self.log("Removed \"stop dictation\" from the copied text")
+                    return
+                }
             }
-            let n = Self.phraseSuffixLength(value)
-            guard n > 0, caretAtEnd else { self.removePhraseWhenPasted(attempt: attempt + 1); return }
-            Self.backspace(n)
-            self.log("Removed \"stop dictation\" from the pasted text")
+            if let (value, caretAtEnd) = Self.focusedText(), caretAtEnd {
+                let n = Self.phraseSuffixLength(value)
+                if n > 0 {
+                    Self.backspace(n)
+                    self.log("Removed \"stop dictation\" from the pasted text")
+                    return
+                }
+            }
+            self.removePhrase(clipboardBefore: clipboardBefore, attempt: attempt + 1)
         }
     }
 

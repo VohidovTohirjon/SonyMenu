@@ -87,7 +87,12 @@ private struct GeneralTab: View {
                     if hp.supports(Fn.gs2), let mp = hp.multipoint {
                         Toggle(isOn: Binding(get: { mp }, set: { hp.setMultipoint($0) })) {
                             Text("Connect to 2 devices at once (multipoint)")
-                            Text("The headphones may reconnect when you change this.")
+                            if hp.multipointRefused {
+                                Text("The headphones refused this change (firmware \(hp.firmware ?? "?")). Turn it on once in Sony's Sound Connect app on your phone; it stays on, and this switch then shows it.")
+                                    .foregroundStyle(Color.dsOrange)
+                            } else {
+                                Text("The headphones may reconnect when you change this.")
+                            }
                         }
                     }
                 }

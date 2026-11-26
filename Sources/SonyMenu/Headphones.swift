@@ -92,6 +92,9 @@ final class Headphones: NSObject, ObservableObject {
     @Published private(set) var voiceAssistantOptions: [UInt8] = []
     @Published private(set) var touchPanel: Bool?
     @Published private(set) var multipoint: Bool?
+    /// Set when the headphones answered a multipoint change by keeping the old value.
+    @Published private(set) var multipointRefused = false
+    private var multipointWanted: Bool?
     @Published private(set) var voiceGuidance: Bool?
 
     // Playback
@@ -454,7 +457,15 @@ final class Headphones: NSObject, ObservableObject {
         case Cmd.gsRetParam, Cmd.gsNtfyParam:
             guard p.count >= 4 else { return }
             if type == Cmd.gsTouchPanel { touchPanel = p[3] == 0x00 }
-            if type == Cmd.gsMultipoint { multipoint = p[3] == 0x00 }
+            if type == Cmd.gsMultipoint {
+                let now = p[3] == 0x00
+                if let wanted = multipointWanted, cmd == Cmd.gsNtfyParam {
+                    multipointWanted = nil
+                    multipointRefused = wanted != now
+                    if wanted != now { log("Headphones refused to turn multipoint \(wanted ? "on" : "off")") }
+                }
+                multipoint = now
+            }
             reply(cmd, type)
 
         case Cmd.audioRetParam, Cmd.audioNtfyParam:
@@ -756,9 +767,14 @@ final class Headphones: NSObject, ObservableObject {
         send([Cmd.gsSetParam, Cmd.gsTouchPanel, 0x00, on ? 0x00 : 0x01])
     }
 
+    /// Diagnostics only (--rawset).
+    func sendRaw(_ bytes: [UInt8]) { send(bytes) }
+
     func setMultipoint(_ on: Bool) {
         guard supports(Fn.gs2) else { return }
         multipoint = on
+        multipointWanted = on
+        multipointRefused = false
         send([Cmd.gsSetParam, Cmd.gsMultipoint, 0x00, on ? 0x00 : 0x01])
     }
 
