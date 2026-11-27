@@ -30,7 +30,8 @@ enum Gesture: String, CaseIterable, Identifiable {
 
     var isLeft: Bool { self == .leftPress || self == .leftHold }
 
-    var title: String {
+    var title: String { L(titleKey) }
+    private var titleKey: String {
         switch self {
         case .doubleTap: return "Double tap"
         case .swipeForward: return "Swipe forward"
@@ -46,7 +47,8 @@ enum Gesture: String, CaseIterable, Identifiable {
     }
 
     /// What the headphones do on their own.
-    var builtIn: String {
+    var builtIn: String { L(builtInKey) }
+    private var builtInKey: String {
         switch self {
         case .doubleTap: return "Play/Pause"
         case .swipeForward: return "Next track"
@@ -85,9 +87,9 @@ enum Gesture: String, CaseIterable, Identifiable {
     }
 
     var detail: String {
-        if mediaKey != nil { return "Default: \(builtIn) on this Mac. Your choice replaces it." }
-        if self == .leftHold { return "Headphones: nothing. Free for any Mac action." }
-        return "Headphones: \(builtIn). Your choice runs as well."
+        if mediaKey != nil { return String(format: L("Default: %@ on this Mac. Your choice replaces it."), builtIn) }
+        if self == .leftHold { return L("Headphones: nothing. Free for any Mac action.") }
+        return String(format: L("Headphones: %@. Your choice runs as well."), builtIn)
     }
 }
 
@@ -104,7 +106,8 @@ enum MacAction: String, CaseIterable, Identifiable {
          .volumeUp, .volumeDown, .mute].contains(self)
     }
 
-    var title: String {
+    var title: String { L(titleKey) }
+    private var titleKey: String {
         switch self {
         case .keepDefault: return "Default"
         case .nothing: return "Do nothing"
@@ -300,7 +303,7 @@ final class GestureController: ObservableObject {
             guard actionTimes.count < 5 else { log("Gesture ignored: too many in 5 s"); return }
             actionTimes.append(Date())
         }
-        lastEvent = "\(g.isLeft ? "Left" : "Right"): \(g.title) → \(a == .keepDefault ? g.builtIn : a.title)"
+        lastEvent = "\(g.isLeft ? L("Left") : L("Right")): \(g.title) → \(a == .keepDefault ? g.builtIn : a.title)"
         log("Gesture \(g.rawValue) → \(a.rawValue)")
         if chosen == .keepDefault, let mk = g.mediaKey {
             // Default playback: act now, unless the headphones' own key just did it.
@@ -466,7 +469,7 @@ final class GestureController: ObservableObject {
         let panel = NSOpenPanel()
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.allowedContentTypes = [.application]
-        panel.prompt = "Choose"
+        panel.prompt = L("Choose")
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         apps[g] = url

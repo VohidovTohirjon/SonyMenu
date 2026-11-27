@@ -15,6 +15,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/SonyMenu"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+for l in Resources/*.lproj; do cp -R "$l" "$APP/Contents/Resources/"; done
 # Sign with a fixed local certificate when there is one, so macOS keeps Accessibility and
 # microphone permissions across rebuilds (an ad-hoc signature looks like a new app each time).
 # Create it once with ./make-signing-cert.sh.

@@ -2,29 +2,36 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key>
-    <string>SonyMenu</string>
-    <key>CFBundleIdentifier</key>
-    <string>local.sonymenu</string>
-    <key>CFBundleName</key>
-    <string>SonyMenu</string>
-    <key>CFBundleDisplayName</key>
-    <string>SonyMenu</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>2.0</string>
-    <key>CFBundleVersion</key>
-    <string>2</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>26.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>While you dictate with the headphones, SonyMenu listens on the Mac's microphone for "stop dictation" so it can finish for you. Nothing is recorded.</string>
-    <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>SonyMenu talks to your Sony headphones to show their battery and change noise cancelling and other settings.</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>SonyMenu</string>
+	<key>CFBundleExecutable</key>
+	<string>SonyMenu</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.sonymenu</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+	</array>
+	<key>CFBundleName</key>
+	<string>SonyMenu</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.0</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>While you dictate with the headphones, SonyMenu listens on the Mac's microphone for "stop dictation" so it can finish for you. Nothing is recorded.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>SonyMenu talks to your Sony headphones to show their battery and change noise cancelling and other settings.</string>
 </dict>
 </plist>

@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "headphones", accessibilityDescription: "Headphones")
+        item.button?.image = NSImage(systemSymbolName: "headphones", accessibilityDescription: L("Headphones"))
         item.button?.target = self
         item.button?.action = #selector(togglePanel)
         item.isVisible = false
@@ -83,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let host = NSHostingController(rootView: SettingsView().environmentObject(hp))
             let w = NSWindow(contentViewController: host)
-            w.title = "SonyMenu Settings"
+            w.title = L("SonyMenu Settings")
             w.styleMask = [.titled, .closable, .miniaturizable]
             w.isReleasedWhenClosed = false
             w.center()

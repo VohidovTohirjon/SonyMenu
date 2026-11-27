@@ -23,7 +23,24 @@ extension Color {
     static let dsRed = Color(light: 0xFF3B30, dark: 0xFF453A)
 }
 
+// MARK: - Localization
+
+/// Looks a string up in the app's Localizable.strings (ru.lproj); English is the key itself.
+func L(_ key: String) -> String { Bundle.main.localizedString(forKey: key, value: nil, table: nil) }
+
 // MARK: - Panel
+
+/// What the compact menu bar panel shows besides the modes. Everything else is in Settings.
+@MainActor
+final class PanelPrefs: ObservableObject {
+    static let shared = PanelPrefs()
+    @Published var showSound: Bool { didSet { UserDefaults.standard.set(showSound, forKey: "panel.showSound") } }
+    @Published var showPlayback: Bool { didSet { UserDefaults.standard.set(showPlayback, forKey: "panel.showPlayback") } }
+    private init() {
+        showSound = UserDefaults.standard.bool(forKey: "panel.showSound")
+        showPlayback = UserDefaults.standard.bool(forKey: "panel.showPlayback")
+    }
+}
 
 @MainActor
 final class LoginItem: ObservableObject {
